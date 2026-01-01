@@ -5,10 +5,7 @@ import { VoiceName } from "../types";
 import { base64ToUint8Array, pcmToWavBlob } from "../utils/audioHelper";
 
 const getClient = () => {
-  // 1. GANTI INI: Kita cari variabel 'GEMINI_API_KEYS' (Pake S, Jamak)
   const keysString = process.env.GEMINI_API_KEYS;
-
-  // Cek apakah kuncinya ada
   if (!keysString) {
     throw new Error("GEMINI_API_KEYS is missing. Please check .env.local or Vercel Settings.");
   }
@@ -24,7 +21,7 @@ const getClient = () => {
 };
 
 /**
- * Generates speech with a smart context window to ensure flow without breaking API limits.
+ * Generates speech with a strict consistency lock for professional narration.
  */
 export const generateSpeech = async (
   text: string, 
@@ -33,37 +30,42 @@ export const generateSpeech = async (
   fullContext?: string 
 ): Promise<Blob> => {
   const ai = getClient();
-  const style = styleInstruction || "professional and natural narrative";
+  const style = styleInstruction || "natural and professional";
 
-  // Membersihkan teks dari tanda kutip yang mungkin tidak sengaja terbawa
   const cleanText = text.replace(/^["']|["']$/g, '').trim();
 
-  // Sliding window context untuk emosi yang menyambung
+  // Menyediakan konteks sebelumnya agar model "mengingat" aliran emosi
   let contextBefore = "";
   if (fullContext) {
     const index = fullContext.indexOf(text);
     if (index > 0) {
-      contextBefore = fullContext.substring(Math.max(0, index - 1000), index);
+      // Ambil 1500 karakter sebelumnya untuk konteks memori suara yang kuat
+      contextBefore = fullContext.substring(Math.max(0, index - 1500), index);
     }
   }
 
-  // Prompt yang lebih cair agar tidak terdengar seperti "membaca kutipan"
+  // Prompt dengan instruksi KONSISTENSI TOTAL
   const prompt = `
-INSTRUCTION:
-You are a professional voice actor. Speak the following segment naturally.
-This text is PART OF A CONTINUOUS NARRATION. 
-Maintain a ${style} tone.
+# SYSTEM INSTRUCTION: CONSISTENCY LOCK
+You are a high-end AI Voice Engine. You are currently in the middle of a LONG recording session.
+Consistency is your HIGHEST priority. 
 
-CRITICAL RULES for SEAMLESS FLOW:
-- DO NOT add leading or trailing silence.
-- DO NOT use "quotation" intonation (no air quotes or citation style).
-- Ensure the prosody flows as if this is the middle of a sentence or paragraph.
-- ONLY speak the words provided in the segment below.
+## YOUR PERSONA:
+- Voice ID: ${voice}
+- Style: ${style}
+- State: Mid-narration (seamless flow required)
 
-PREVIOUS CONTEXT (FOR EMOTIONAL FLOW ONLY - DO NOT SPEAK THIS):
-${contextBefore || 'Beginning of narration.'}
+## RULES FOR TOTAL CONSISTENCY:
+1. DO NOT change your pitch, volume, or emotional energy.
+2. DO NOT change your speaking rate/speed.
+3. Maintain the EXACT SAME personality as the previous segments.
+4. NO intro/outro breathing or pauses at the start or end of this segment.
+5. NO "citation" or "reading a list" tone. This is a FLUID narration.
 
-CURRENT SEGMENT TO SPEAK:
+## CONTEXT MEMORY (FOR REFERENCE ONLY - DO NOT SPEAK):
+"${contextBefore || 'Start of the story.'}"
+
+## CURRENT TEXT SEGMENT TO GENERATE (SPEAK ONLY THIS):
 ${cleanText}
   `.trim();
 
@@ -73,6 +75,8 @@ ${cleanText}
       contents: [{ parts: [{ text: prompt }] }],
       config: {
         responseModalities: [Modality.AUDIO],
+        // Menetapkan seed statis jika didukung bisa membantu, 
+        // tapi di model TTS Gemini, instruksi prompt adalah kunci utama konsistensi.
         speechConfig: {
           voiceConfig: {
             prebuiltVoiceConfig: { voiceName: voice },
@@ -95,7 +99,7 @@ ${cleanText}
     return pcmToWavBlob(pcmData);
 
   } catch (error: any) {
-    console.error("Gemini TTS Error:", error);
+    console.error("Gemini TTS Consistency Error:", error);
     throw error;
   }
 };
