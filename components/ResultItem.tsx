@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { TTSItem } from '../types';
-import { Play, Pause, Download, AlertCircle, Loader2, CheckCircle2, RotateCcw, Hash, Type, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Play, Pause, Download, AlertCircle, Loader2, RotateCcw, Hash, Type, CloudUpload, Link, Copy, Check } from 'lucide-react';
 
 interface ResultItemProps {
   item: TTSItem & { 
@@ -10,10 +10,12 @@ interface ResultItemProps {
     isWaitingLimit?: boolean;
   };
   onRetry: (id: string) => void;
+  onUpload: (id: string) => void;
 }
 
-const ResultItem: React.FC<ResultItemProps> = ({ item, onRetry }) => {
+const ResultItem: React.FC<ResultItemProps> = ({ item, onRetry, onUpload }) => {
   const [isPlaying, setIsPlaying] = useState(false);
+  const [copied, setCopied] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
@@ -31,13 +33,12 @@ const ResultItem: React.FC<ResultItemProps> = ({ item, onRetry }) => {
     setIsPlaying(!isPlaying);
   };
 
-  const handleDownload = () => {
-    if (!item.audioUrl) return;
-    const a = document.createElement('a');
-    a.href = item.audioUrl;
-    const safeText = item.text.substring(0, 20).replace(/[^a-z0-9]/gi, '_').toLowerCase();
-    a.download = `ngabacot_g${item.groupIndex || 0}_${item.voice}_${safeText}.wav`;
-    a.click();
+  const copyLink = () => {
+    if (item.cloudUrl) {
+      navigator.clipboard.writeText(item.cloudUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
   };
 
   return (
@@ -58,26 +59,23 @@ const ResultItem: React.FC<ResultItemProps> = ({ item, onRetry }) => {
                 <Type className="w-3.5 h-3.5" />
                 {item.text.length} CHARS
             </span>
-            {item.retryCount && item.retryCount > 1 && (
-               <span className="bg-amber-500/10 text-amber-600 text-[9px] font-black px-3 py-1 rounded-lg border border-amber-500/10 uppercase flex items-center gap-1.5">
-                 <RefreshCw className="w-3 h-3" />
-                 ATTEMPT {item.retryCount}
-               </span>
-            )}
           </div>
 
-          <p className="text-slate-800 dark:text-[#e3e3e3] text-sm leading-relaxed italic font-medium opacity-90">
-            "{item.text}"
+          <p className="text-slate-800 dark:text-[#e3e3e3] text-sm leading-relaxed font-medium opacity-90">
+            {item.text}
           </p>
 
-          {item.isWaitingLimit && (
-             <div className="flex items-center gap-3 text-amber-600 text-[10px] font-black bg-amber-500/5 p-4 rounded-2xl border border-amber-500/10 uppercase tracking-widest animate-pulse">
-               <AlertTriangle className="w-4 h-4 shrink-0" />
-               <span>RATE LIMIT DETECTED - COOLING DOWN...</span>
-             </div>
+          {item.cloudUrl && (
+            <div className="flex items-center gap-2 bg-emerald-500/5 border border-emerald-500/20 p-3 rounded-2xl">
+              <Link className="w-3.5 h-3.5 text-emerald-500" />
+              <span className="text-[10px] font-bold text-emerald-600 truncate flex-1">{item.cloudUrl}</span>
+              <button onClick={copyLink} className="p-1.5 hover:bg-emerald-500/20 rounded-lg text-emerald-600 transition-colors">
+                {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+              </button>
+            </div>
           )}
 
-          {item.status === 'error' && !item.isWaitingLimit && (
+          {item.status === 'error' && (
              <div className="flex items-center gap-3 text-red-500 text-[10px] font-black bg-red-500/5 p-4 rounded-2xl border border-red-500/10 uppercase tracking-widest">
                <AlertCircle className="w-4 h-4 shrink-0" />
                <span className="line-clamp-1">{item.errorMsg}</span>
@@ -86,26 +84,29 @@ const ResultItem: React.FC<ResultItemProps> = ({ item, onRetry }) => {
           )}
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {item.status === 'completed' && item.audioUrl && (
             <>
-              <button onClick={togglePlay} className="w-14 h-14 flex items-center justify-center rounded-2xl bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg transition-all active:scale-90">
-                {isPlaying ? <Pause className="w-6 h-6 fill-current" /> : <Play className="w-6 h-6 fill-current ml-1" />}
+              <button onClick={togglePlay} className="w-12 h-12 flex items-center justify-center rounded-2xl bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg transition-all active:scale-90">
+                {isPlaying ? <Pause className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current ml-1" />}
               </button>
-              <button onClick={handleDownload} className="w-14 h-14 flex items-center justify-center rounded-2xl border border-slate-200 dark:border-[#444746] text-slate-500 dark:text-gray-400 hover:bg-slate-50 dark:hover:bg-[#131314] transition-all">
-                <Download className="w-6 h-6" />
-              </button>
+              
+              {!item.cloudUrl && (
+                <button 
+                  onClick={() => onUpload(item.id)} 
+                  disabled={item.isUploading}
+                  className={`w-12 h-12 flex items-center justify-center rounded-2xl border border-slate-200 dark:border-[#444746] ${item.isUploading ? 'text-indigo-500' : 'text-slate-500 dark:text-gray-400 hover:text-indigo-500'} transition-all`}
+                  title="Upload ke Server (Gratis)"
+                >
+                  {item.isUploading ? <Loader2 className="w-5 h-5 animate-spin" /> : <CloudUpload className="w-5 h-5" />}
+                </button>
+              )}
               <audio ref={audioRef} src={item.audioUrl} />
             </>
           )}
           {item.status === 'processing' && (
-            <div className={`w-14 h-14 flex items-center justify-center rounded-2xl ${item.isWaitingLimit ? 'bg-amber-500/10' : 'bg-indigo-500/5'}`}>
-              <Loader2 className={`w-7 h-7 animate-spin ${item.isWaitingLimit ? 'text-amber-500' : 'text-indigo-500'}`} />
-            </div>
-          )}
-           {item.status === 'pending' && (
-            <div className="w-14 h-14 flex items-center justify-center opacity-10">
-              <CheckCircle2 className="w-7 h-7" />
+            <div className="w-12 h-12 flex items-center justify-center rounded-2xl bg-indigo-500/5">
+              <Loader2 className="w-6 h-6 animate-spin text-indigo-500" />
             </div>
           )}
         </div>
