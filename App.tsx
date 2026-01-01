@@ -24,13 +24,6 @@ const App: React.FC = () => {
   const [previewStatus, setPreviewStatus] = useState<'idle' | 'generating' | 'playing'>('idle');
   const [zipStatus, setZipStatus] = useState<'idle' | 'processing' | 'success' | 'error'>('idle');
 
-  // API Key Hint Identification
-  const apiKeyHint = useMemo(() => {
-    const key = process.env.API_KEY;
-    if (!key || key.length < 4) return null;
-    return key.substring(key.length - 4);
-  }, []);
-
   useEffect(() => {
     if (isDarkMode) document.documentElement.classList.add('dark');
     else document.documentElement.classList.remove('dark');
@@ -80,8 +73,7 @@ const App: React.FC = () => {
       text: item.text,
       voice: item.voice,
       status: item.status,
-      cloudUrl: item.cloudUrl || null,
-      apiKeyUsed: apiKeyHint ? `...${apiKeyHint}` : 'unknown'
+      cloudUrl: item.cloudUrl || null
     }));
 
     const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
@@ -114,6 +106,8 @@ const App: React.FC = () => {
     }
     return plan;
   }, [allLines, linesPerBatch]);
+
+  const totalCharsOverall = useMemo(() => batchPlan.reduce((acc, p) => acc + p.charCount, 0), [batchPlan]);
 
   const handlePreview = async () => {
     if (!inputText.trim()) return;
@@ -216,7 +210,7 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-[#0b0c0d] text-slate-900 dark:text-[#e3e3e3] flex flex-col font-sans transition-colors duration-300">
-      <Header isDarkMode={isDarkMode} toggleTheme={toggleTheme} apiKeyHint={apiKeyHint} />
+      <Header isDarkMode={isDarkMode} toggleTheme={toggleTheme} />
 
       <main className="flex-grow max-w-[1600px] w-full mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
         
@@ -229,9 +223,8 @@ const App: React.FC = () => {
                     Studio Produksi
                 </h2>
                 <div className="flex items-center gap-2">
-                   <button onClick={handleOpenKeyDialog} className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-500 hover:bg-indigo-500/20 border border-indigo-500/20 relative group" title="API Key">
+                   <button onClick={handleOpenKeyDialog} className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-500 hover:bg-indigo-500/20 border border-indigo-500/20" title="API Key">
                      <Key className="w-4 h-4" />
-                     {apiKeyHint && <span className="absolute -top-1 -right-1 w-2 h-2 bg-emerald-500 rounded-full border-2 border-white dark:border-[#1e1f20]" />}
                    </button>
                    <div className="flex items-center gap-2 bg-slate-100 dark:bg-[#131314] px-4 py-2 rounded-2xl border border-slate-200 dark:border-[#444746]">
                        <span className="text-[10px] font-black text-slate-500 uppercase">Lines/Batch:</span>
