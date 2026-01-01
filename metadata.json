@@ -1,0 +1,5 @@
+{
+  "name": "NGABACOT BEBAS",
+  "description": "A powerful tool to convert multiple lines of text into high-quality speech audio using Google's Gemini 2.5 Flash TTS model.",
+  "requestFramePermissions": []
+}
