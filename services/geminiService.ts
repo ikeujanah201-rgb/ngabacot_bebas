@@ -33,42 +33,38 @@ export const generateSpeech = async (
   fullContext?: string 
 ): Promise<Blob> => {
   const ai = getClient();
-  const style = styleInstruction || "professional and soulful narrative";
+  const style = styleInstruction || "professional and natural narrative";
 
-  // SLIDING WINDOW CONTEXT: 
-  // Kita ambil lebih banyak teks SEBELUMNYA dan sangat sedikit teks SESUDAHNYA
-  // agar model tahu emosi sebelumnya tapi tidak membaca teks masa depan.
-  let contextWindow = "";
-  if (fullContext && fullContext.length > text.length) {
+  // Membersihkan teks dari tanda kutip yang mungkin tidak sengaja terbawa
+  const cleanText = text.replace(/^["']|["']$/g, '').trim();
+
+  // Sliding window context untuk emosi yang menyambung
+  let contextBefore = "";
+  if (fullContext) {
     const index = fullContext.indexOf(text);
-    if (index !== -1) {
-      const start = Math.max(0, index - 800); // Lihat jauh ke belakang
-      const end = Math.min(fullContext.length, index + text.length + 50); // Lihat sedikit saja ke depan
-      contextWindow = fullContext.substring(start, end);
+    if (index > 0) {
+      contextBefore = fullContext.substring(Math.max(0, index - 1000), index);
     }
   }
 
-  // Prompt dengan pembatas super ketat (Walled Prompting)
+  // Prompt yang lebih cair agar tidak terdengar seperti "membaca kutipan"
   const prompt = `
-### SYSTEM INSTRUCTION ###
-You are a professional voice actor. I will provide you with a "REFERENCE CONTEXT" to understand the emotional flow.
-Then I will provide the "TARGET TEXT" that you MUST speak.
+INSTRUCTION:
+You are a professional voice actor. Speak the following segment naturally.
+This text is PART OF A CONTINUOUS NARRATION. 
+Maintain a ${style} tone.
 
-CRITICAL RULES:
-1. ONLY SPEAK the text inside the [TARGET_TEXT] block.
-2. ABSOLUTELY DO NOT SPEAK anything inside the [REFERENCE_CONTEXT] block.
-3. Maintain a ${style} tone.
-4. No intro, no outro, no filler.
+CRITICAL RULES for SEAMLESS FLOW:
+- DO NOT add leading or trailing silence.
+- DO NOT use "quotation" intonation (no air quotes or citation style).
+- Ensure the prosody flows as if this is the middle of a sentence or paragraph.
+- ONLY speak the words provided in the segment below.
 
-[REFERENCE_CONTEXT_DO_NOT_SPEAK]
-${contextWindow || 'No context available.'}
-[/REFERENCE_CONTEXT_DO_NOT_SPEAK]
+PREVIOUS CONTEXT (FOR EMOTIONAL FLOW ONLY - DO NOT SPEAK THIS):
+${contextBefore || 'Beginning of narration.'}
 
-[TARGET_TEXT]
-${text}
-[/TARGET_TEXT]
-
-### FINAL REMINDER: ONLY SPEAK THE WORDS INSIDE [TARGET_TEXT] ###
+CURRENT SEGMENT TO SPEAK:
+${cleanText}
   `.trim();
 
   try {
@@ -90,9 +86,9 @@ ${text}
     if (!base64Audio) {
       const finishReason = response.candidates?.[0]?.finishReason;
       if (finishReason === 'SAFETY') {
-        throw new Error("Konten diblokir oleh filter keamanan Gemini.");
+        throw new Error("Konten diblokir oleh filter keamanan.");
       }
-      throw new Error(`Gagal generate audio. Reason: ${finishReason || 'Unknown'}`);
+      throw new Error(`Gagal generate audio: ${finishReason || 'Unknown'}`);
     }
 
     const pcmData = base64ToUint8Array(base64Audio);
@@ -100,9 +96,6 @@ ${text}
 
   } catch (error: any) {
     console.error("Gemini TTS Error:", error);
-    if (error.message?.includes("fetch")) {
-      throw new Error("Masalah koneksi internet atau API diblokir.");
-    }
     throw error;
   }
 };
