@@ -1,12 +1,14 @@
 
-import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { Trash2, Wand2, Mic, Layers, PlayCircle, AlignJustify, Settings2, DownloadCloud, Loader2, Volume2, Check, AlertTriangle, Timer, ListOrdered, FileAudio, Sparkles, History, Hash, Type, ChevronRight, AlertCircle, BookOpen, Quote, Award } from 'lucide-react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import { Trash2, Wand2, PlayCircle, Settings2, DownloadCloud, Loader2, Check, Timer, History, FileAudio, Key, FileJson, Sparkles, AlertTriangle, Zap, PauseCircle } from 'lucide-react';
 import Header from './components/Header';
 import ResultItem from './components/ResultItem';
 import { TTSItem, VoiceName, VoiceGender } from './types';
 import { VOICE_METADATA, STYLE_PRESETS, SAMPLE_STORY } from './constants';
 import { generateSpeech } from './services/geminiService';
 import { createZipFromItems } from './utils/audioHelper';
+
+const STORAGE_KEY = 'ngabacot_production_v3';
 
 const App: React.FC = () => {
   const [isDarkMode, setIsDarkMode] = useState(true);
@@ -15,14 +17,34 @@ const App: React.FC = () => {
   const [selectedVoice, setSelectedVoice] = useState<VoiceName>(VoiceName.Kore);
   const [activeGenderTab, setActiveGenderTab] = useState<VoiceGender>('Female');
   const [linesPerBatch, setLinesPerBatch] = useState(1);
-  const [delaySec, setDelaySec] = useState(5); 
+  const [delaySec, setDelaySec] = useState(2); 
 
-  const [items, setItems] = useState<(TTSItem & { groupIndex?: number; retryCount?: number; isWaitingLimit?: boolean })[]>([]);
+  const [items, setItems] = useState<(TTSItem & { groupIndex?: number; retryCount?: number; isWaitingLimit?: boolean; cloudUrl?: string; isUploading?: boolean })[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [cooldownTime, setCooldownTime] = useState<number | null>(null);
   const [limitWaitTime, setLimitWaitTime] = useState<number | null>(null);
   const [previewStatus, setPreviewStatus] = useState<'idle' | 'generating' | 'playing'>('idle');
-  const [zipStatus, setZipStatus] = useState<'idle' | 'processing' | 'success' | 'error'>('idle');
+
+  // Persistence: Load
+  useEffect(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        setItems(parsed.map((i: any) => ({
+          ...i,
+          status: i.status === 'completed' && !i.audioUrl ? 'error' : i.status,
+          errorMsg: i.status === 'completed' && !i.audioUrl ? 'Refresh lost audio data' : i.errorMsg
+        })));
+      } catch (e) { console.error(e); }
+    }
+  }, []);
+
+  // Persistence: Save
+  useEffect(() => {
+    const toSave = items.map(({ audioUrl, ...rest }) => rest);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+  }, [items]);
 
   useEffect(() => {
     if (isDarkMode) document.documentElement.classList.add('dark');
@@ -31,69 +53,61 @@ const App: React.FC = () => {
 
   const toggleTheme = () => setIsDarkMode(!isDarkMode);
 
+  const handleUploadToCloud = async (id: string) => {
+    const item = items.find(i => i.id === id);
+    if (!item || !item.audioUrl || item.isUploading) return;
+    setItems(prev => prev.map(i => i.id === id ? { ...i, isUploading: true } : i));
+    try {
+      const response = await fetch(item.audioUrl);
+      const blob = await response.blob();
+      const fileName = `bacot_${id.substring(0, 6)}.wav`;
+      const up = await fetch(`https://transfer.sh/${fileName}`, { method: 'PUT', body: blob });
+      if (!up.ok) throw new Error("Upload failed");
+      const cloudUrl = await up.text();
+      setItems(prev => prev.map(i => i.id === id ? { ...i, cloudUrl, isUploading: false } : i));
+    } catch (e: any) {
+      setItems(prev => prev.map(i => i.id === id ? { ...i, isUploading: false, errorMsg: e.message } : i));
+    }
+  };
+
   const filteredVoices = useMemo(() => {
     return Object.values(VOICE_METADATA).filter(v => v.gender === activeGenderTab);
   }, [activeGenderTab]);
 
-  const allLines = useMemo(() => {
-    return inputText.split('\n').filter(line => line.trim().length > 0);
-  }, [inputText]);
-
   const batchPlan = useMemo(() => {
+    const lines = inputText.split('\n').filter(l => l.trim().length > 0);
     const plan = [];
-    for (let i = 0; i < allLines.length; i += linesPerBatch) {
-      const chunk = allLines.slice(i, i + linesPerBatch).join('\n');
+    for (let i = 0; i < lines.length; i += linesPerBatch) {
       plan.push({
-        id: `plan-${i}`,
+        id: `plan-${i}-${Date.now()}`,
         group: Math.floor(i / linesPerBatch) + 1,
-        text: chunk,
-        charCount: chunk.length
+        text: lines.slice(i, i + linesPerBatch).join('\n'),
       });
     }
     return plan;
-  }, [allLines, linesPerBatch]);
-
-  const totalCharsOverall = useMemo(() => batchPlan.reduce((acc, p) => acc + p.charCount, 0), [batchPlan]);
-
-  const handlePreview = async () => {
-    if (!inputText.trim()) return;
-    setPreviewStatus('generating');
-    try {
-      const previewText = allLines.length > 0 ? allLines.slice(0, 1).join(' ') : inputText.substring(0, 100);
-      const wavBlob = await generateSpeech(previewText, selectedVoice, styleInstruction, inputText);
-      const audioUrl = URL.createObjectURL(wavBlob);
-      const audio = new Audio(audioUrl);
-      setPreviewStatus('playing');
-      await audio.play();
-      audio.onended = () => { setPreviewStatus('idle'); URL.revokeObjectURL(audioUrl); };
-    } catch (e: any) {
-      alert(`Preview Gagal: ${e.message}`);
-      setPreviewStatus('idle');
-    }
-  };
+  }, [inputText, linesPerBatch]);
 
   const handleGenerateBatch = useCallback(async () => {
     if (batchPlan.length === 0) return;
-
-    const currentFullContext = inputText;
-    const newItems: (TTSItem & { groupIndex: number; retryCount: number })[] = batchPlan.map((p) => ({
-      id: Math.random().toString(36).substring(2, 15),
-      text: p.text.trim(),
-      status: 'pending',
+    const currentContext = inputText;
+    const newItems = batchPlan.map(p => ({
+      id: Math.random().toString(36).substring(2, 11),
+      text: p.text,
+      status: 'pending' as const,
       voice: selectedVoice,
       groupIndex: p.group,
       retryCount: 0
     }));
-
-    setItems((prev) => [...newItems, ...prev]);
+    
+    setItems(prev => [...newItems, ...prev]);
     setIsProcessing(true);
 
     for (let i = 0; i < newItems.length; i++) {
       const item = newItems[i];
       let success = false;
-      let attempts = 0;
+      let attempt = 0;
 
-      // INFINITE LOOP: Akan terus mencoba sampai baris ini berhasil (success = true)
+      // KUNCI PADA GRUP INI: Tidak akan lanjut ke 'i++' sampai baris ini sukses (atau safety block)
       while (!success) {
         attempt++;
         setItems(prev => prev.map(it => it.id === item.id ? { ...it, status: 'processing', retryCount: attempt, isWaitingLimit: false } : it));
@@ -127,39 +141,18 @@ const App: React.FC = () => {
       }
       
       setLimitWaitTime(null);
-
+      
+      // Jeda antar baris hanya dilakukan jika baris sebelumnya benar-benar sukses
       if (success && i < newItems.length - 1) {
-          for (let t = delaySec; t > 0; t--) {
-              setCooldownTime(t);
-              await new Promise(r => setTimeout(r, 1000));
-          }
-          setCooldownTime(null);
+        for (let t = delaySec; t > 0; t--) {
+          setCooldownTime(t);
+          await new Promise(r => setTimeout(r, 1000));
+        }
+        setCooldownTime(null);
       }
     }
     setIsProcessing(false);
   }, [batchPlan, selectedVoice, styleInstruction, delaySec, inputText]);
-
-  const handleDownloadZip = async () => {
-    setZipStatus('processing');
-    try {
-      const zipBlob = await createZipFromItems(items);
-      const url = URL.createObjectURL(zipBlob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `ngabacot_batch_${Date.now()}.zip`;
-      a.click();
-      setZipStatus('success');
-      setTimeout(() => setZipStatus('idle'), 3000);
-    } catch (e) {
-      setZipStatus('error');
-      setTimeout(() => setZipStatus('idle'), 3000);
-    }
-  };
-
-  const loadSampleStory = () => {
-    setInputText(SAMPLE_STORY);
-    setStyleInstruction(STYLE_PRESETS.find(s => s.id === 'pribadi')?.value || '');
-  };
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-[#0b0c0d] text-slate-900 dark:text-[#e3e3e3] flex flex-col font-sans transition-colors duration-300">
