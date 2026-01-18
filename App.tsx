@@ -8,7 +8,7 @@ import { VOICE_METADATA, STYLE_PRESETS, SAMPLE_STORY } from './constants';
 import { generateSpeech } from './services/geminiService';
 import { createZipFromItems } from './utils/audioHelper';
 
-const STORAGE_KEY = 'ngabacot_production_v3_auto';
+const STORAGE_KEY = 'ngabacot_production_v3_final';
 
 const App: React.FC = () => {
   const [isDarkMode, setIsDarkMode] = useState(true);
@@ -26,6 +26,7 @@ const App: React.FC = () => {
   const [previewStatus, setPreviewStatus] = useState<'idle' | 'generating' | 'playing'>('idle');
   const [zipStatus, setZipStatus] = useState<'idle' | 'processing' | 'success' | 'error'>('idle');
 
+  // Persistence: Load
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
@@ -40,6 +41,7 @@ const App: React.FC = () => {
     }
   }, []);
 
+  // Persistence: Save
   useEffect(() => {
     const toSave = items.map(({ audioUrl, ...rest }) => rest);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
@@ -145,14 +147,14 @@ const App: React.FC = () => {
           const isRateLimit = errorMsg.includes("429") || errorMsg.toLowerCase().includes("quota") || errorMsg.toLowerCase().includes("limit");
           
           if (isRateLimit) {
-             setItems((prev) => prev.map((it) => (it.id === item.id ? { ...it, isWaitingLimit: true, errorMsg: `LIMIT TERDETEKSI: MENGULANG (${attempts}x)` } : it)));
+             setItems((prev) => prev.map((it) => (it.id === item.id ? { ...it, isWaitingLimit: true, errorMsg: `LIMIT: RETRY KE-${attempts}` } : it)));
              for (let t = 2; t > 0; t--) {
                 setLimitWaitTime(t);
                 await new Promise(r => setTimeout(r, 1000));
              }
              setLimitWaitTime(null);
           } else if (errorMsg.includes("Safety")) {
-             setItems((prev) => prev.map((it) => (it.id === item.id ? { ...it, status: 'error', errorMsg: "SAFETY FILTER: MELEWATI" } : it)));
+             setItems((prev) => prev.map((it) => (it.id === item.id ? { ...it, status: 'error', errorMsg: "SAFETY: MELEWATI" } : it)));
              await new Promise(r => setTimeout(r, 2000));
              break; 
           } else {
@@ -212,7 +214,7 @@ const App: React.FC = () => {
                     STUDIO PRODUKSI
                 </h2>
                 <div className="flex items-center gap-2 bg-slate-100 dark:bg-[#131314] px-4 py-2 rounded-2xl border border-slate-200 dark:border-[#444746]">
-                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Grup/Batch:</span>
+                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Baris/Grup:</span>
                     <input 
                       type="number" 
                       value={linesPerBatch}
@@ -226,7 +228,7 @@ const App: React.FC = () => {
                 <div className="space-y-4">
                     <label className="text-xs font-black text-slate-500 dark:text-gray-400 uppercase tracking-widest flex items-center gap-2">
                         <Sparkles className="w-4 h-4 text-amber-500" />
-                        GAYA NARASI
+                        PILIH INTONASI & STYLE
                     </label>
                     <div className="flex flex-wrap gap-2">
                         {STYLE_PRESETS.map((style) => (
@@ -285,12 +287,12 @@ const App: React.FC = () => {
                     </div>
                     <div className="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto custom-scrollbar pr-2">
                         {filteredVoices.map((v) => (
-                            <button key={v.name} onClick={() => setSelectedVoice(v.name)} className={`p-4 rounded-2xl border-2 transition-all text-left ${selectedVoice === v.name ? 'border-indigo-500 bg-indigo-500/5 text-indigo-500 shadow-inner' : 'border-slate-100 dark:border-[#444746] hover:border-slate-300 dark:hover:border-slate-500'}`}>
+                            <button key={v.name} onClick={() => setSelectedVoice(v.name)} className={`p-4 rounded-2xl border-2 transition-all text-left relative ${selectedVoice === v.name ? 'border-indigo-500 bg-indigo-500/5 text-indigo-500 shadow-inner' : 'border-slate-100 dark:border-[#444746] hover:border-slate-300 dark:hover:border-slate-500'}`}>
                                 <div className="flex justify-between items-start">
                                     <div>
                                         <div className="text-sm font-bold flex items-center gap-2">
                                             {v.name}
-                                            {(v.name === VoiceName.Kore || v.name === VoiceName.Zephyr) && <span className="text-[8px] bg-amber-500 text-white px-2 py-0.5 rounded-full uppercase font-black">TOP</span>}
+                                            {(v.name === VoiceName.Kore || v.name === VoiceName.Zephyr) && <span className="text-[8px] bg-amber-500 text-white px-2 py-0.5 rounded-full uppercase font-black">TOP CHOICE</span>}
                                         </div>
                                         <div className="text-[10px] opacity-60 font-medium uppercase mt-0.5">{v.description}</div>
                                     </div>
@@ -302,16 +304,22 @@ const App: React.FC = () => {
                 </div>
 
                 <div className="pt-6 grid grid-cols-1 gap-4">
+                    <button onClick={handlePreview} disabled={isProcessing || previewStatus !== 'idle' || !inputText} className="w-full py-4 border-2 border-slate-200 dark:border-[#444746] rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-[#131314] flex items-center justify-center gap-3">
+                         {previewStatus === 'generating' ? <Loader2 className="w-4 h-4 animate-spin" /> : previewStatus === 'playing' ? <Volume2 className="w-4 h-4 animate-bounce" /> : <PlayCircle className="w-4 h-4" />}
+                         CEK PREVIEW SUARA
+                    </button>
+
                     <button onClick={handleGenerateBatch} disabled={isProcessing || batchPlan.length === 0} className={`w-full py-6 rounded-3xl text-white font-black text-lg shadow-2xl transition-all ${isProcessing ? (limitWaitTime ? 'bg-amber-600 animate-pulse' : 'bg-slate-800') : 'bg-indigo-600 hover:scale-[1.02] shadow-indigo-500/20'}`}>
                         <div className="flex flex-col items-center">
                             <div className="flex items-center gap-3">
                                 {isProcessing ? (limitWaitTime ? <RefreshCcw className="w-6 h-6 animate-spin" /> : <Loader2 className="w-6 h-6 animate-spin" />) : <Wand2 className="w-6 h-6" />}
                                 {isProcessing ? (
-                                    limitWaitTime ? `RETRYING... (${limitWaitTime}S)` : 
-                                    cooldownTime ? `COOLDOWN: ${cooldownTime}S...` : 
-                                    `PROCESSING BATCH...`
-                                ) : `MULAI PRODUKSI SEKARANG`}
+                                    limitWaitTime ? `RETRIEVING... (${limitWaitTime}S)` : 
+                                    cooldownTime ? `JEDA: ${cooldownTime}S...` : 
+                                    `MEMPROSES...`
+                                ) : `MULAI PRODUKSI`}
                             </div>
+                            {!isProcessing && <span className="text-[10px] opacity-60 font-bold mt-1 tracking-widest uppercase italic">{batchPlan.length} GRUP • {totalCharsOverall} KARAKTER</span>}
                         </div>
                     </button>
                 </div>
@@ -320,6 +328,38 @@ const App: React.FC = () => {
         </div>
 
         <div className="lg:col-span-7 space-y-8">
+          {/* BATCH PLANNER SECTION - DENGAN PERHITUNGAN KARAKTER */}
+          {batchPlan.length > 0 && !isProcessing && items.length === 0 && (
+              <div className="bg-white dark:bg-[#1e1f20] rounded-3xl border border-slate-200 dark:border-[#444746] p-8 shadow-xl">
+                  <div className="flex items-center justify-between mb-6">
+                      <h2 className="text-xl font-bold flex items-center gap-3 uppercase italic tracking-tighter">
+                          <ListOrdered className="w-6 h-6 text-indigo-500" />
+                          Batch Planner
+                      </h2>
+                      <div className="text-[10px] font-black text-slate-400 uppercase">{totalCharsOverall} TOTAL KARAKTER</div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                      {batchPlan.map((p) => (
+                          <div key={p.id} className="p-4 bg-slate-50 dark:bg-[#131314] rounded-2xl border border-slate-100 dark:border-[#444746] flex items-center justify-between hover:border-indigo-500/30 transition-all">
+                               <div className="flex items-center gap-4">
+                                   <div className="w-10 h-10 rounded-xl bg-white dark:bg-[#1e1f20] border border-slate-200 dark:border-[#444746] flex items-center justify-center font-black text-indigo-500 text-sm">
+                                       {p.group}
+                                   </div>
+                                   <div className="flex flex-col">
+                                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">Grup #{p.group}</span>
+                                       <span className="text-xs text-slate-600 italic truncate max-w-[120px] dark:text-gray-400">"{p.text.substring(0, 30)}..."</span>
+                                   </div>
+                               </div>
+                               <div className="flex items-center gap-1.5 text-[10px] font-black text-indigo-500 bg-indigo-500/5 px-3 py-1.5 rounded-lg border border-indigo-500/10">
+                                   <Type className="w-3 h-3" />
+                                   {p.charCount} CHARS
+                               </div>
+                          </div>
+                      ))}
+                  </div>
+              </div>
+          )}
+
           <div className="space-y-6">
             <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#444746] pb-6 px-2">
                 <h2 className="text-2xl font-black flex items-center gap-4 italic tracking-tighter uppercase">
@@ -346,7 +386,7 @@ const App: React.FC = () => {
                 {items.length === 0 ? (
                     <div className="py-32 flex flex-col items-center justify-center border-4 border-dashed border-slate-100 dark:border-[#1e1f20] rounded-[3rem] opacity-30">
                         <FileAudio className="w-20 h-20 mb-6" />
-                        <p className="text-sm font-black uppercase tracking-[0.4em] italic text-center">Ready to Record</p>
+                        <p className="text-sm font-black uppercase tracking-[0.4em] italic text-center">Warehouse Empty</p>
                     </div>
                 ) : (
                     items.map((item) => <ResultItem key={item.id} item={item} onRetry={() => {}} onUpload={handleUploadToCloud} />)
