@@ -1,13 +1,15 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { TTSItem } from '../types';
-import { Play, Pause, Download, AlertCircle, Loader2, RotateCcw, Hash, Type, CloudUpload, Link, Copy, Check } from 'lucide-react';
+import { Play, Pause, AlertCircle, Loader2, RotateCcw, Hash, Type, CloudUpload, Link, Copy, Check, Zap } from 'lucide-react';
 
 interface ResultItemProps {
   item: TTSItem & { 
     groupIndex?: number; 
     retryCount?: number; 
     isWaitingLimit?: boolean;
+    cloudUrl?: string;
+    isUploading?: boolean;
   };
   onRetry: (id: string) => void;
   onUpload: (id: string) => void;
@@ -33,7 +35,7 @@ const ResultItem: React.FC<ResultItemProps> = ({ item, onRetry, onUpload }) => {
     setIsPlaying(!isPlaying);
   };
 
-  const copyLink = () => {
+  const copyUrl = () => {
     if (item.cloudUrl) {
       navigator.clipboard.writeText(item.cloudUrl);
       setCopied(true);
@@ -42,12 +44,20 @@ const ResultItem: React.FC<ResultItemProps> = ({ item, onRetry, onUpload }) => {
   };
 
   return (
-    <div className={`bg-white dark:bg-[#1e1f20] border rounded-3xl p-6 transition-all group shadow-sm ${item.isWaitingLimit ? 'border-amber-500 shadow-amber-500/10' : 'border-slate-200 dark:border-[#444746] hover:border-indigo-500/40'}`}>
+    <div className={`relative bg-white dark:bg-[#1e1f20] border rounded-[2rem] p-6 transition-all group shadow-sm ${item.isWaitingLimit ? 'border-red-500 shadow-xl shadow-red-500/10 ring-2 ring-red-500/20' : 'border-slate-200 dark:border-[#444746] hover:border-indigo-500/40'}`}>
+      
+      {item.isWaitingLimit && (
+        <div className="absolute -top-3 left-6 bg-red-600 text-white text-[9px] font-black px-4 py-1.5 rounded-full uppercase italic flex items-center gap-2 shadow-lg animate-bounce">
+          <Zap className="w-3 h-3 fill-current" />
+          Sedang Menunggu API Key Baru...
+        </div>
+      )}
+
       <div className="flex items-start justify-between gap-6">
         <div className="flex-1 space-y-4">
           <div className="flex items-center gap-2 flex-wrap">
             {item.groupIndex && (
-              <span className="bg-indigo-500/10 text-indigo-500 text-[9px] font-black px-3 py-1 rounded-lg border border-indigo-500/10 uppercase flex items-center gap-1.5">
+              <span className={`text-[9px] font-black px-3 py-1 rounded-lg border uppercase flex items-center gap-1.5 transition-colors ${item.isWaitingLimit ? 'bg-red-500 text-white border-red-500' : 'bg-indigo-500/10 text-indigo-500 border-indigo-500/10'}`}>
                 <Hash className="w-3 h-3" />
                 GRUP {item.groupIndex}
               </span>
@@ -55,31 +65,38 @@ const ResultItem: React.FC<ResultItemProps> = ({ item, onRetry, onUpload }) => {
             <span className="bg-slate-100 dark:bg-[#131314] text-slate-500 dark:text-gray-400 text-[9px] font-black px-3 py-1 rounded-lg border border-slate-200 dark:border-[#444746] uppercase">
               {item.voice}
             </span>
-            <span className="text-[9px] text-slate-400 font-bold px-1 flex items-center gap-1.5 uppercase tracking-wider">
-                <Type className="w-3.5 h-3.5" />
-                {item.text.length} CHARS
-            </span>
+            {item.retryCount && item.retryCount > 0 && (
+              <span className="bg-amber-500/10 text-amber-500 text-[9px] font-black px-3 py-1 rounded-lg border border-amber-500/10 uppercase">
+                RETRY: {item.retryCount}
+              </span>
+            )}
           </div>
 
-          <p className="text-slate-800 dark:text-[#e3e3e3] text-sm leading-relaxed font-medium opacity-90">
+          <p className={`text-sm leading-relaxed font-medium transition-colors ${item.isWaitingLimit ? 'text-red-600 dark:text-red-400 font-bold' : 'text-slate-800 dark:text-[#e3e3e3]'}`}>
             {item.text}
           </p>
 
           {item.cloudUrl && (
-            <div className="flex items-center gap-2 bg-emerald-500/5 border border-emerald-500/20 p-3 rounded-2xl">
+            <div className="flex items-center gap-2 bg-emerald-500/5 border border-emerald-500/20 p-3 rounded-xl">
               <Link className="w-3.5 h-3.5 text-emerald-500" />
               <span className="text-[10px] font-bold text-emerald-600 truncate flex-1">{item.cloudUrl}</span>
-              <button onClick={copyLink} className="p-1.5 hover:bg-emerald-500/20 rounded-lg text-emerald-600 transition-colors">
+              <button onClick={copyUrl} className="p-1.5 hover:bg-emerald-500/20 rounded-lg text-emerald-600">
                 {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
               </button>
             </div>
           )}
 
           {item.status === 'error' && (
-             <div className="flex items-center gap-3 text-red-500 text-[10px] font-black bg-red-500/5 p-4 rounded-2xl border border-red-500/10 uppercase tracking-widest">
+             <div className="flex items-center gap-3 text-red-500 text-[10px] font-black bg-red-500/5 p-4 rounded-xl border border-red-500/10 uppercase tracking-widest">
                <AlertCircle className="w-4 h-4 shrink-0" />
                <span className="line-clamp-1">{item.errorMsg}</span>
-               <button onClick={() => onRetry(item.id)} className="ml-auto bg-red-500 text-white px-3 py-1.5 rounded-lg hover:bg-red-600"><RotateCcw className="w-3.5 h-3.5" /></button>
+             </div>
+          )}
+
+          {item.isWaitingLimit && (
+             <div className="flex items-center gap-3 text-red-600 text-[10px] font-black bg-red-600/5 p-4 rounded-xl border border-red-600/20 uppercase tracking-widest animate-pulse">
+               <AlertCircle className="w-4 h-4 shrink-0" />
+               <span>{item.errorMsg}</span>
              </div>
           )}
         </div>
@@ -87,7 +104,7 @@ const ResultItem: React.FC<ResultItemProps> = ({ item, onRetry, onUpload }) => {
         <div className="flex items-center gap-2">
           {item.status === 'completed' && item.audioUrl && (
             <>
-              <button onClick={togglePlay} className="w-12 h-12 flex items-center justify-center rounded-2xl bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg transition-all active:scale-90">
+              <button onClick={togglePlay} className="w-12 h-12 flex items-center justify-center rounded-2xl bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg active:scale-90 transition-all">
                 {isPlaying ? <Pause className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current ml-1" />}
               </button>
               
@@ -96,7 +113,7 @@ const ResultItem: React.FC<ResultItemProps> = ({ item, onRetry, onUpload }) => {
                   onClick={() => onUpload(item.id)} 
                   disabled={item.isUploading}
                   className={`w-12 h-12 flex items-center justify-center rounded-2xl border border-slate-200 dark:border-[#444746] ${item.isUploading ? 'text-indigo-500' : 'text-slate-500 dark:text-gray-400 hover:text-indigo-500'} transition-all`}
-                  title="Upload ke Server (Gratis)"
+                  title="Upload to Cloud (transfer.sh)"
                 >
                   {item.isUploading ? <Loader2 className="w-5 h-5 animate-spin" /> : <CloudUpload className="w-5 h-5" />}
                 </button>
@@ -104,9 +121,9 @@ const ResultItem: React.FC<ResultItemProps> = ({ item, onRetry, onUpload }) => {
               <audio ref={audioRef} src={item.audioUrl} />
             </>
           )}
-          {item.status === 'processing' && (
-            <div className="w-12 h-12 flex items-center justify-center rounded-2xl bg-indigo-500/5">
-              <Loader2 className="w-6 h-6 animate-spin text-indigo-500" />
+          {(item.status === 'processing' || item.isWaitingLimit) && (
+            <div className={`w-12 h-12 flex items-center justify-center rounded-2xl transition-colors ${item.isWaitingLimit ? 'bg-red-500/10 text-red-500' : 'bg-indigo-500/5 text-indigo-500'}`}>
+              <Loader2 className="w-6 h-6 animate-spin" />
             </div>
           )}
         </div>
