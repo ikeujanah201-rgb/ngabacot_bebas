@@ -1,22 +1,17 @@
+
 import { GoogleGenAI, Modality } from "@google/genai";
 import { TTS_MODEL } from "../constants";
 import { VoiceName } from "../types";
 import { base64ToUint8Array, pcmToWavBlob } from "../utils/audioHelper";
 
 const getClient = () => {
-  // Menggunakan process.env.API_KEY sebagai sumber utama sesuai instruksi sistem
-  // Namun tetap mendukung format comma-separated untuk rotasi otomatis
-  const keysString = process.env.API_KEY;
+  const keysString = process.env.GEMINI_API_KEYS;
   if (!keysString) {
-    throw new Error("API_KEY is missing. Please check Vercel Environment Variables.");
+    throw new Error("GEMINI_API_KEYS is missing. Please check .env.local or Vercel Settings.");
   }
 
-  // 2. LOGIKA USER: Pecah string berdasarkan koma (,) dan bersihkan spasi
+  // 2. LOGIKA BARU: Pecah string berdasarkan koma (,) dan bersihkan spasi
   const keys = keysString.split(',').map(key => key.trim()).filter(key => key.length > 0);
-
-  if (keys.length === 0) {
-    throw new Error("API_KEY format is invalid.");
-  }
 
   // 3. PILIH ACAK: Ambil satu kunci secara random dari daftar
   const randomKey = keys[Math.floor(Math.random() * keys.length)];
@@ -49,7 +44,7 @@ export const generateSpeech = async (
     }
   }
 
-  // Prompt dengan instruksi KONSISTENSI TOTAL (Logika User)
+  // Prompt dengan instruksi KONSISTENSI TOTAL
   const prompt = `
 # SYSTEM INSTRUCTION: CONSISTENCY LOCK
 You are a high-end AI Voice Engine. You are currently in the middle of a LONG recording session.
@@ -80,6 +75,8 @@ ${cleanText}
       contents: [{ parts: [{ text: prompt }] }],
       config: {
         responseModalities: [Modality.AUDIO],
+        // Menetapkan seed statis jika didukung bisa membantu, 
+        // tapi di model TTS Gemini, instruksi prompt adalah kunci utama konsistensi.
         speechConfig: {
           voiceConfig: {
             prebuiltVoiceConfig: { voiceName: voice },
