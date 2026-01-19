@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { Trash2, Wand2, PlayCircle, DownloadCloud, Loader2, Volume2, Check, Timer, ListOrdered, FileAudio, Sparkles, History, Type, Quote, Zap, RefreshCcw, AlertTriangle, RotateCcw } from 'lucide-react';
 import Header from './components/Header';
@@ -27,20 +26,7 @@ const App: React.FC = () => {
   const [zipStatus, setZipStatus] = useState<'idle' | 'processing' | 'success' | 'error'>('idle');
   const [hasError, setHasError] = useState<string | null>(null);
 
-  // EMERGENCY RESET: Jika URL mengandung ?reset=true, bersihkan storage
-  useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('reset') === 'true') {
-        localStorage.clear();
-        window.location.href = window.location.pathname; 
-      }
-    } catch (e) {
-      console.error("Reset failed", e);
-    }
-  }, []);
-
-  // Persistence: Load
+  // Persistence: Load (Hanya muat, tidak menghapus jika tidak perlu)
   useEffect(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -50,13 +36,12 @@ const App: React.FC = () => {
           setItems(parsed.map((i: any) => ({
             ...i,
             status: i.status === 'completed' && !i.audioUrl ? 'error' : i.status,
-            errorMsg: i.status === 'completed' && !i.audioUrl ? 'Audio tidak tersedia (generate ulang)' : i.errorMsg
+            errorMsg: i.status === 'completed' && !i.audioUrl ? 'Audio expired' : i.errorMsg
           })));
         }
       }
     } catch (e) {
-      console.error("Gagal memuat data:", e);
-      // Tidak menghapus localStorage secara paksa di sini agar user tidak kehilangan data jika hanya error parsing sementara
+      console.error("Gagal memuat history:", e);
     }
   }, []);
 
@@ -68,7 +53,7 @@ const App: React.FC = () => {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
       }
     } catch (e) {
-      console.error("Gagal menyimpan data:", e);
+      console.error("Gagal menyimpan:", e);
     }
   }, [items]);
 
@@ -173,7 +158,7 @@ const App: React.FC = () => {
           
           if (isRateLimit) {
              setItems((prev) => prev.map((it) => (it.id === item.id ? { ...it, isWaitingLimit: true, errorMsg: `LIMIT: MENCOBA ROTASI API KEY...` } : it)));
-             for (let t = 3; t > 0; t--) {
+             for (let t = 2; t > 0; t--) {
                 setLimitWaitTime(t);
                 await new Promise(r => setTimeout(r, 1000));
              }
@@ -253,11 +238,11 @@ const App: React.FC = () => {
                     STUDIO PRODUKSI
                 </h2>
                 <button 
-                  onClick={() => { if(confirm('Hapus semua memori browser dan reset?')) { localStorage.clear(); window.location.reload(); } }}
+                  onClick={() => { if(confirm('Hapus semua history produksi?')) { setItems([]); localStorage.removeItem(STORAGE_KEY); } }}
                   className="p-2 text-slate-400 hover:text-red-500 transition-colors"
-                  title="Force Reset"
+                  title="Clear Storage"
                 >
-                  <RotateCcw className="w-5 h-5" />
+                  <Trash2 className="w-5 h-5" />
                 </button>
             </div>
 
@@ -265,7 +250,7 @@ const App: React.FC = () => {
                 <div className="flex items-center justify-between bg-slate-100 dark:bg-[#131314] p-4 rounded-2xl border border-slate-200 dark:border-[#444746]">
                     <div className="flex items-center gap-3">
                         <ListOrdered className="w-5 h-5 text-indigo-500" />
-                        <span className="text-[10px] font-black text-slate-500 uppercase">Baris / Grup</span>
+                        <span className="text-[10px] font-black text-slate-500 uppercase">Baris per Grup</span>
                     </div>
                     <input 
                       type="number" 
@@ -308,7 +293,7 @@ const App: React.FC = () => {
                     <textarea
                         value={inputText}
                         onChange={(e) => setInputText(e.target.value)}
-                        placeholder="Tempel naskah di sini..."
+                        placeholder="Ketik/tempel naskah..."
                         className="w-full h-44 bg-slate-50 dark:bg-[#131314] border border-slate-200 dark:border-[#444746] rounded-[2rem] p-6 text-sm leading-relaxed focus:border-indigo-500 outline-none resize-none custom-scrollbar"
                     />
                 </div>
@@ -422,7 +407,7 @@ const App: React.FC = () => {
                     {items.some(i => i.status === 'completed') && (
                         <button onClick={handleDownloadZip} disabled={zipStatus !== 'idle'} className="flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-indigo-500 transition-all shadow-xl active:scale-95">
                              {zipStatus === 'processing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <DownloadCloud className="w-4 h-4" />}
-                             DOWNLOAD SEMUA (.ZIP)
+                             ZIP SEMUA
                         </button>
                     )}
                     {items.length > 0 && (
