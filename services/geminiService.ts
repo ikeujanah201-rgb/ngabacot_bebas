@@ -1,43 +1,27 @@
+
 import { GoogleGenAI, Modality } from "@google/genai";
 import { TTS_MODEL } from "../constants";
 import { VoiceName } from "../types";
 import { base64ToUint8Array, pcmToWavBlob } from "../utils/audioHelper";
 
-/**
- * Mendapatkan API Key secara aman dari environment variables.
- * Mendukung format string tunggal atau daftar kunci dipisahkan koma.
- */
-const getApiKeySafe = (): string => {
-  try {
-    // Mencoba akses process.env dengan berbagai fallback
-    const rawKey = (typeof process !== 'undefined' && process.env?.API_KEY) || 
-                   (window as any).process?.env?.API_KEY || 
-                   "";
-    
-    if (!rawKey) return "";
-
-    // Memecah kunci jika ada banyak (Multi-Key Rotation)
-    const keys = rawKey.split(',').map(k => k.trim()).filter(k => k.length > 0);
-    if (keys.length === 0) return "";
-
-    // Memilih satu kunci secara acak untuk load balancing/rotasi
-    return keys[Math.floor(Math.random() * keys.length)];
-  } catch (e) {
-    console.warn("Gagal mengakses API_KEY:", e);
-    return "";
-  }
-};
-
 const getClient = () => {
-  const apiKey = getApiKeySafe();
-  if (!apiKey) {
-    throw new Error("API_KEY tidak ditemukan. Pastikan variabel lingkungan sudah disetel di Vercel/Studio.");
+  const keysString = process.env.GEMINI_API_KEYS;
+  if (!keysString) {
+    throw new Error("GEMINI_API_KEYS is missing. Please check .env.local or Vercel Settings.");
   }
-  return new GoogleGenAI({ apiKey });
+
+  // 2. LOGIKA BARU: Pecah string berdasarkan koma (,) dan bersihkan spasi
+  const keys = keysString.split(',').map(key => key.trim()).filter(key => key.length > 0);
+
+  // 3. PILIH ACAK: Ambil satu kunci secara random dari daftar
+  const randomKey = keys[Math.floor(Math.random() * keys.length)];
+
+  // 4. Masukkan kunci terpilih ke GoogleGenAI
+  return new GoogleGenAI({ apiKey: randomKey });
 };
 
 /**
- * Melakukan generate speech dengan instruksi konsistensi suara yang ketat.
+ * Generates speech with a strict consistency lock for professional narration.
  */
 export const generateSpeech = async (
   text: string, 
@@ -47,38 +31,41 @@ export const generateSpeech = async (
 ): Promise<Blob> => {
   const ai = getClient();
   const style = styleInstruction || "natural and professional";
+
   const cleanText = text.replace(/^["']|["']$/g, '').trim();
 
-  // Membangun konteks memori untuk AI agar intonasi tetap terjaga
+  // Menyediakan konteks sebelumnya agar model "mengingat" aliran emosi
   let contextBefore = "";
   if (fullContext) {
     const index = fullContext.indexOf(text);
     if (index > 0) {
+      // Ambil 1500 karakter sebelumnya untuk konteks memori suara yang kuat
       contextBefore = fullContext.substring(Math.max(0, index - 1500), index);
     }
   }
 
+  // Prompt dengan instruksi KONSISTENSI TOTAL
   const prompt = `
 # SYSTEM INSTRUCTION: CONSISTENCY LOCK
-You are a high-end AI Voice Engine in a long recording session.
-TOTAL CONSISTENCY IS REQUIRED.
+You are a high-end AI Voice Engine. You are currently in the middle of a LONG recording session.
+Consistency is your HIGHEST priority. 
 
-## PERSONA:
+## YOUR PERSONA:
 - Voice ID: ${voice}
 - Style: ${style}
-- Flow: Mid-narration continuation
+- State: Mid-narration (seamless flow required)
 
-## RULES:
-1. NO pitch, volume, or energy shifts.
-2. NO speed changes.
-3. Keep the exact same personality as before.
-4. NO intro/outro pauses or breathing sounds.
-5. This is a FLUID narration, not a list reading.
+## RULES FOR TOTAL CONSISTENCY:
+1. DO NOT change your pitch, volume, or emotional energy.
+2. DO NOT change your speaking rate/speed.
+3. Maintain the EXACT SAME personality as the previous segments.
+4. NO intro/outro breathing or pauses at the start or end of this segment.
+5. NO "citation" or "reading a list" tone. This is a FLUID narration.
 
-## MEMORY (DO NOT SPEAK):
-"${contextBefore || 'Start of session.'}"
+## CONTEXT MEMORY (FOR REFERENCE ONLY - DO NOT SPEAK):
+"${contextBefore || 'Start of the story.'}"
 
-## TEXT TO SPEAK (SPEAK ONLY THIS):
+## CURRENT TEXT SEGMENT TO GENERATE (SPEAK ONLY THIS):
 ${cleanText}
   `.trim();
 
@@ -88,6 +75,8 @@ ${cleanText}
       contents: [{ parts: [{ text: prompt }] }],
       config: {
         responseModalities: [Modality.AUDIO],
+        // Menetapkan seed statis jika didukung bisa membantu, 
+        // tapi di model TTS Gemini, instruksi prompt adalah kunci utama konsistensi.
         speechConfig: {
           voiceConfig: {
             prebuiltVoiceConfig: { voiceName: voice },
@@ -100,15 +89,17 @@ ${cleanText}
 
     if (!base64Audio) {
       const finishReason = response.candidates?.[0]?.finishReason;
-      if (finishReason === 'SAFETY') throw new Error("Diblokir oleh filter keamanan (Safety Filter).");
-      throw new Error(`TTS Gagal: ${finishReason || 'Alasan tidak diketahui'}`);
+      if (finishReason === 'SAFETY') {
+        throw new Error("Konten diblokir oleh filter keamanan.");
+      }
+      throw new Error(`Gagal generate audio: ${finishReason || 'Unknown'}`);
     }
 
     const pcmData = base64ToUint8Array(base64Audio);
     return pcmToWavBlob(pcmData);
 
   } catch (error: any) {
-    console.error("Gemini TTS Error:", error);
+    console.error("Gemini TTS Consistency Error:", error);
     throw error;
   }
 };
