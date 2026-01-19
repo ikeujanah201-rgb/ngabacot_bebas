@@ -1,6 +1,6 @@
 
-import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { Trash2, Wand2, Mic, PlayCircle, Settings2, DownloadCloud, Loader2, Volume2, Check, Timer, ListOrdered, FileAudio, Sparkles, History, Type, Quote, Zap, RefreshCcw } from 'lucide-react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import { Trash2, Wand2, PlayCircle, DownloadCloud, Loader2, Volume2, Check, Timer, ListOrdered, FileAudio, Sparkles, History, Type, Quote, Zap, RefreshCcw, AlertTriangle } from 'lucide-react';
 import Header from './components/Header';
 import ResultItem from './components/ResultItem';
 import { TTSItem, VoiceName, VoiceGender } from './types';
@@ -8,7 +8,7 @@ import { VOICE_METADATA, STYLE_PRESETS, SAMPLE_STORY } from './constants';
 import { generateSpeech } from './services/geminiService';
 import { createZipFromItems } from './utils/audioHelper';
 
-const STORAGE_KEY = 'ngabacot_production_v3_fixed';
+const STORAGE_KEY = 'ngabacot_v3_final_stable';
 
 const App: React.FC = () => {
   const [isDarkMode, setIsDarkMode] = useState(true);
@@ -25,24 +25,36 @@ const App: React.FC = () => {
   const [limitWaitTime, setLimitWaitTime] = useState<number | null>(null);
   const [previewStatus, setPreviewStatus] = useState<'idle' | 'generating' | 'playing'>('idle');
   const [zipStatus, setZipStatus] = useState<'idle' | 'processing' | 'success' | 'error'>('idle');
+  const [initError, setInitError] = useState<string | null>(null);
 
+  // Persistence: Load dengan proteksi ekstra
   useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
         const parsed = JSON.parse(saved);
-        setItems(parsed.map((i: any) => ({
-          ...i,
-          status: i.status === 'completed' && !i.audioUrl ? 'error' : i.status,
-          errorMsg: i.status === 'completed' && !i.audioUrl ? 'Refresh lost audio' : i.errorMsg
-        })));
-      } catch (e) { console.error(e); }
+        if (Array.isArray(parsed)) {
+          setItems(parsed.map((i: any) => ({
+            ...i,
+            status: i.status === 'completed' && !i.audioUrl ? 'error' : i.status,
+            errorMsg: i.status === 'completed' && !i.audioUrl ? 'Data audio hilang setelah refresh' : i.errorMsg
+          })));
+        }
+      }
+    } catch (e) {
+      console.error("Gagal memuat data lama:", e);
+      localStorage.removeItem(STORAGE_KEY); // Hapus jika rusak agar tidak blank lagi
     }
   }, []);
 
+  // Persistence: Save
   useEffect(() => {
-    const toSave = items.map(({ audioUrl, ...rest }) => rest);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+    try {
+      const toSave = items.map(({ audioUrl, ...rest }) => rest);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+    } catch (e) {
+      console.error("Gagal menyimpan data:", e);
+    }
   }, [items]);
 
   useEffect(() => {
@@ -61,7 +73,7 @@ const App: React.FC = () => {
       const blob = await response.blob();
       const fileName = `bacot_${id.substring(0, 6)}.wav`;
       const up = await fetch(`https://transfer.sh/${fileName}`, { method: 'PUT', body: blob });
-      if (!up.ok) throw new Error("Upload failed");
+      if (!up.ok) throw new Error("Gagal upload");
       const cloudUrl = await up.text();
       setItems(prev => prev.map(i => i.id === id ? { ...i, cloudUrl, isUploading: false } : i));
     } catch (e: any) {
@@ -141,23 +153,20 @@ const App: React.FC = () => {
           setItems((prev) => prev.map((it) => it.id === item.id ? { ...it, status: 'completed', audioUrl, retryCount: attempts, isWaitingLimit: false, errorMsg: undefined } : it));
           success = true; 
         } catch (error: any) {
-          const errorMsg = error.message || "Unknown error";
+          const errorMsg = error.message || "Error tidak diketahui";
           const isRateLimit = errorMsg.includes("429") || errorMsg.toLowerCase().includes("quota") || errorMsg.toLowerCase().includes("limit");
           
           if (isRateLimit) {
-             setItems((prev) => prev.map((it) => (it.id === item.id ? { ...it, isWaitingLimit: true, errorMsg: `LIMIT: MEROTASI API KEY...` } : it)));
-             for (let t = 2; t > 0; t--) {
+             setItems((prev) => prev.map((it) => (it.id === item.id ? { ...it, isWaitingLimit: true, errorMsg: `LIMIT: SEDANG ROTASI API KEY...` } : it)));
+             for (let t = 3; t > 0; t--) {
                 setLimitWaitTime(t);
                 await new Promise(r => setTimeout(r, 1000));
              }
              setLimitWaitTime(null);
-          } else if (errorMsg.includes("Safety")) {
-             setItems((prev) => prev.map((it) => (it.id === item.id ? { ...it, status: 'error', errorMsg: "SAFETY: MELEWATI BARIS INI" } : it)));
-             await new Promise(r => setTimeout(r, 2000));
-             break; 
           } else {
              setItems((prev) => prev.map((it) => (it.id === item.id ? { ...it, status: 'error', errorMsg: errorMsg } : it)));
-             await new Promise(r => setTimeout(r, 3000));
+             await new Promise(r => setTimeout(r, 2000));
+             break; 
           }
         }
       }
@@ -195,6 +204,25 @@ const App: React.FC = () => {
     setStyleInstruction(STYLE_PRESETS.find(s => s.id === 'pribadi')?.value || '');
   };
 
+  // UI Fallback jika terjadi error fatal
+  if (initError) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 text-white text-center">
+        <div className="space-y-6 max-w-md">
+          <AlertTriangle className="w-16 h-16 text-red-500 mx-auto animate-bounce" />
+          <h1 className="text-2xl font-bold">Opps! Aplikasi Gagal Memuat</h1>
+          <p className="text-slate-400 text-sm">{initError}</p>
+          <button 
+            onClick={() => { localStorage.clear(); window.location.reload(); }}
+            className="px-8 py-3 bg-indigo-600 rounded-2xl font-bold uppercase tracking-widest text-xs"
+          >
+            Bersihkan Cache & Muat Ulang
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-[#0b0c0d] text-slate-900 dark:text-[#e3e3e3] flex flex-col font-sans transition-colors duration-300">
       <Header isDarkMode={isDarkMode} toggleTheme={toggleTheme} />
@@ -210,7 +238,7 @@ const App: React.FC = () => {
                     STUDIO PRODUKSI
                 </h2>
                 <div className="flex items-center gap-2 bg-slate-100 dark:bg-[#131314] px-4 py-2 rounded-2xl border border-slate-200 dark:border-[#444746]">
-                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Baris/Grup:</span>
+                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Grup/Baris:</span>
                     <input 
                       type="number" 
                       value={linesPerBatch}
@@ -310,7 +338,7 @@ const App: React.FC = () => {
                             <div className="flex items-center gap-3">
                                 {isProcessing ? (limitWaitTime ? <RefreshCcw className="w-6 h-6 animate-spin" /> : <Loader2 className="w-6 h-6 animate-spin" />) : <Wand2 className="w-6 h-6" />}
                                 {isProcessing ? (
-                                    limitWaitTime ? `ROTATING KEYS... (${limitWaitTime}S)` : 
+                                    limitWaitTime ? `ROTASI KEYS... (${limitWaitTime}S)` : 
                                     cooldownTime ? `JEDA: ${cooldownTime}S...` : 
                                     `MEMPROSES BATCH...`
                                 ) : `MULAI PRODUKSI`}
@@ -324,7 +352,6 @@ const App: React.FC = () => {
         </div>
 
         <div className="lg:col-span-7 space-y-8">
-          {/* BATCH PLANNER - DENGAN HITUNGAN KARAKTER PER GRUP */}
           {batchPlan.length > 0 && !isProcessing && items.length === 0 && (
               <div className="bg-white dark:bg-[#1e1f20] rounded-[3rem] border border-slate-200 dark:border-[#444746] p-10 shadow-xl animate-in fade-in slide-in-from-bottom-4 duration-500">
                   <div className="flex items-center justify-between mb-8">
@@ -358,7 +385,6 @@ const App: React.FC = () => {
               </div>
           )}
 
-          {/* HISTORI PRODUKSI */}
           <div className="space-y-6">
             <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#444746] pb-6 px-2">
                 <h2 className="text-2xl font-black flex items-center gap-4 italic tracking-tighter uppercase">
