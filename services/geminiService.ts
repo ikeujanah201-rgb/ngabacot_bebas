@@ -1,22 +1,26 @@
-
 import { GoogleGenAI, Modality } from "@google/genai";
 import { TTS_MODEL } from "../constants";
 import { VoiceName } from "../types";
 import { base64ToUint8Array, pcmToWavBlob } from "../utils/audioHelper";
 
 const getClient = () => {
-  const keysString = process.env.GEMINI_API_KEYS;
+  // Mengambil string API Key dari environment variable (bisa berisi banyak kunci dipisah koma)
+  const keysString = process.env.API_KEY;
+  
   if (!keysString) {
-    throw new Error("GEMINI_API_KEYS is missing. Please check .env.local or Vercel Settings.");
+    throw new Error("API_KEY tidak ditemukan di environment variables.");
   }
 
-  // 2. LOGIKA BARU: Pecah string berdasarkan koma (,) dan bersihkan spasi
+  // LOGIKA MULTI-KEY: Pecah string dan bersihkan
   const keys = keysString.split(',').map(key => key.trim()).filter(key => key.length > 0);
 
-  // 3. PILIH ACAK: Ambil satu kunci secara random dari daftar
+  if (keys.length === 0) {
+    throw new Error("Format API_KEY tidak valid.");
+  }
+
+  // ROTASI ACAK: Pilih satu kunci secara random
   const randomKey = keys[Math.floor(Math.random() * keys.length)];
 
-  // 4. Masukkan kunci terpilih ke GoogleGenAI
   return new GoogleGenAI({ apiKey: randomKey });
 };
 
@@ -31,20 +35,18 @@ export const generateSpeech = async (
 ): Promise<Blob> => {
   const ai = getClient();
   const style = styleInstruction || "natural and professional";
-
   const cleanText = text.replace(/^["']|["']$/g, '').trim();
 
-  // Menyediakan konteks sebelumnya agar model "mengingat" aliran emosi
+  // Mempersiapkan memori konteks agar suara tetap konsisten
   let contextBefore = "";
   if (fullContext) {
     const index = fullContext.indexOf(text);
     if (index > 0) {
-      // Ambil 1500 karakter sebelumnya untuk konteks memori suara yang kuat
       contextBefore = fullContext.substring(Math.max(0, index - 1500), index);
     }
   }
 
-  // Prompt dengan instruksi KONSISTENSI TOTAL
+  // Prompt Konsistensi Total (Sesuai permintaan user)
   const prompt = `
 # SYSTEM INSTRUCTION: CONSISTENCY LOCK
 You are a high-end AI Voice Engine. You are currently in the middle of a LONG recording session.
@@ -75,8 +77,6 @@ ${cleanText}
       contents: [{ parts: [{ text: prompt }] }],
       config: {
         responseModalities: [Modality.AUDIO],
-        // Menetapkan seed statis jika didukung bisa membantu, 
-        // tapi di model TTS Gemini, instruksi prompt adalah kunci utama konsistensi.
         speechConfig: {
           voiceConfig: {
             prebuiltVoiceConfig: { voiceName: voice },
@@ -89,17 +89,15 @@ ${cleanText}
 
     if (!base64Audio) {
       const finishReason = response.candidates?.[0]?.finishReason;
-      if (finishReason === 'SAFETY') {
-        throw new Error("Konten diblokir oleh filter keamanan.");
-      }
-      throw new Error(`Gagal generate audio: ${finishReason || 'Unknown'}`);
+      if (finishReason === 'SAFETY') throw new Error("Diblokir oleh filter keamanan.");
+      throw new Error(`Gagal: ${finishReason || 'Unknown'}`);
     }
 
     const pcmData = base64ToUint8Array(base64Audio);
     return pcmToWavBlob(pcmData);
 
   } catch (error: any) {
-    console.error("Gemini TTS Consistency Error:", error);
+    console.error("Gemini TTS Error:", error);
     throw error;
   }
 };

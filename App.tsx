@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
-import { Trash2, Wand2, PlayCircle, DownloadCloud, Loader2, Volume2, Check, Timer, ListOrdered, FileAudio, Sparkles, History, Type, Quote, Zap, RefreshCcw, AlertTriangle, RotateCcw } from 'lucide-react';
+import { Trash2, Wand2, PlayCircle, DownloadCloud, Loader2, Volume2, Check, Timer, ListOrdered, FileAudio, Sparkles, History, Quote, Zap, RotateCcw, AlertCircle } from 'lucide-react';
 import Header from './components/Header';
 import ResultItem from './components/ResultItem';
 import { TTSItem, VoiceName, VoiceGender } from './types';
@@ -7,7 +7,7 @@ import { VOICE_METADATA, STYLE_PRESETS, SAMPLE_STORY } from './constants';
 import { generateSpeech } from './services/geminiService';
 import { createZipFromItems } from './utils/audioHelper';
 
-const STORAGE_KEY = 'ngabacot_v5_final';
+const STORAGE_KEY = 'bacot_studio_v1';
 
 const App: React.FC = () => {
   const [isDarkMode, setIsDarkMode] = useState(true);
@@ -24,36 +24,29 @@ const App: React.FC = () => {
   const [limitWaitTime, setLimitWaitTime] = useState<number | null>(null);
   const [previewStatus, setPreviewStatus] = useState<'idle' | 'generating' | 'playing'>('idle');
   const [zipStatus, setZipStatus] = useState<'idle' | 'processing' | 'success' | 'error'>('idle');
-  const [hasError, setHasError] = useState<string | null>(null);
 
-  // Persistence: Load (Hanya muat, tidak menghapus jika tidak perlu)
+  // Load history safely
   useEffect(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          setItems(parsed.map((i: any) => ({
-            ...i,
-            status: i.status === 'completed' && !i.audioUrl ? 'error' : i.status,
-            errorMsg: i.status === 'completed' && !i.audioUrl ? 'Audio expired' : i.errorMsg
-          })));
-        }
+        if (Array.isArray(parsed)) setItems(parsed.map(i => ({ ...i, status: i.status === 'processing' ? 'pending' : i.status })));
       }
     } catch (e) {
-      console.error("Gagal memuat history:", e);
+      console.error("Load history error", e);
     }
   }, []);
 
-  // Persistence: Save
+  // Save history safely
   useEffect(() => {
     try {
       if (items.length > 0) {
-        const dataToSave = items.map(({ audioUrl, ...rest }) => rest);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
+        const toSave = items.map(({ audioUrl, ...rest }) => rest);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
       }
     } catch (e) {
-      console.error("Gagal menyimpan:", e);
+      console.error("Save history error", e);
     }
   }, [items]);
 
@@ -73,7 +66,6 @@ const App: React.FC = () => {
       const blob = await response.blob();
       const fileName = `bacot_${id.substring(0, 6)}.wav`;
       const up = await fetch(`https://transfer.sh/${fileName}`, { method: 'PUT', body: blob });
-      if (!up.ok) throw new Error("Cloud upload gagal");
       const cloudUrl = await up.text();
       setItems(prev => prev.map(i => i.id === id ? { ...i, cloudUrl, isUploading: false } : i));
     } catch (e: any) {
@@ -93,190 +85,113 @@ const App: React.FC = () => {
     const plan = [];
     for (let i = 0; i < allLines.length; i += linesPerBatch) {
       const chunk = allLines.slice(i, i + linesPerBatch).join('\n');
-      plan.push({
-        id: `plan-${i}-${Date.now()}`,
-        group: Math.floor(i / linesPerBatch) + 1,
-        text: chunk,
-        charCount: chunk.length
-      });
+      plan.push({ id: `p-${i}`, group: Math.floor(i / linesPerBatch) + 1, text: chunk });
     }
     return plan;
   }, [allLines, linesPerBatch]);
-
-  const totalCharsOverall = useMemo(() => batchPlan.reduce((acc, p) => acc + p.charCount, 0), [batchPlan]);
 
   const handlePreview = async () => {
     if (!inputText.trim()) return;
     setPreviewStatus('generating');
     try {
-      const previewText = allLines.length > 0 ? allLines.slice(0, 1).join(' ') : inputText.substring(0, 100);
-      const wavBlob = await generateSpeech(previewText, selectedVoice, styleInstruction, inputText);
+      const sample = allLines[0] || inputText.substring(0, 100);
+      const wavBlob = await generateSpeech(sample, selectedVoice, styleInstruction, inputText);
       const audioUrl = URL.createObjectURL(wavBlob);
       const audio = new Audio(audioUrl);
       setPreviewStatus('playing');
       await audio.play();
       audio.onended = () => { setPreviewStatus('idle'); URL.revokeObjectURL(audioUrl); };
     } catch (e: any) {
-      alert(`Error: ${e.message}`);
+      alert(`Preview Gagal: ${e.message}`);
       setPreviewStatus('idle');
     }
   };
 
   const handleGenerateBatch = useCallback(async () => {
     if (batchPlan.length === 0) return;
-
-    const currentFullContext = inputText;
-    const newItems = batchPlan.map((p) => ({
-      id: Math.random().toString(36).substring(2, 15),
-      text: p.text.trim(),
-      status: 'pending' as const,
-      voice: selectedVoice,
-      groupIndex: p.group,
-      retryCount: 0
-    }));
-
-    setItems((prev) => [...newItems, ...prev]);
     setIsProcessing(true);
 
+    const newItems = batchPlan.map(p => ({
+      id: Math.random().toString(36).substring(2, 9),
+      text: p.text,
+      status: 'pending' as const,
+      voice: selectedVoice,
+      groupIndex: p.group
+    }));
+
+    setItems(prev => [...newItems, ...prev]);
+
     for (let i = 0; i < newItems.length; i++) {
-      const item = newItems[i];
+      const current = newItems[i];
       let success = false;
-      let attempts = 0;
+      let attempt = 0;
 
-      while (!success) {
-        attempts++;
-        setItems((prev) => prev.map((it) => (it.id === item.id ? { ...it, status: 'processing', retryCount: attempts, isWaitingLimit: false } : it)));
-
+      while (!success && attempt < 3) {
+        attempt++;
+        setItems(prev => prev.map(it => it.id === current.id ? { ...it, status: 'processing', retryCount: attempt } : it));
+        
         try {
-          const wavBlob = await generateSpeech(item.text, item.voice, styleInstruction, currentFullContext);
-          const audioUrl = URL.createObjectURL(wavBlob);
-          setItems((prev) => prev.map((it) => it.id === item.id ? { ...it, status: 'completed', audioUrl, retryCount: attempts, isWaitingLimit: false, errorMsg: undefined } : it));
-          success = true; 
-        } catch (error: any) {
-          const errorMsg = error.message || "Request Error";
-          const isRateLimit = errorMsg.includes("429") || errorMsg.toLowerCase().includes("quota") || errorMsg.toLowerCase().includes("limit");
-          
-          if (isRateLimit) {
-             setItems((prev) => prev.map((it) => (it.id === item.id ? { ...it, isWaitingLimit: true, errorMsg: `LIMIT: MENCOBA ROTASI API KEY...` } : it)));
-             for (let t = 2; t > 0; t--) {
-                setLimitWaitTime(t);
-                await new Promise(r => setTimeout(r, 1000));
-             }
-             setLimitWaitTime(null);
+          const blob = await generateSpeech(current.text, current.voice, styleInstruction, inputText);
+          const url = URL.createObjectURL(blob);
+          setItems(prev => prev.map(it => it.id === current.id ? { ...it, status: 'completed', audioUrl: url, isWaitingLimit: false } : it));
+          success = true;
+        } catch (err: any) {
+          const isLimit = err.message.includes('429') || err.message.toLowerCase().includes('limit');
+          if (isLimit) {
+            setItems(prev => prev.map(it => it.id === current.id ? { ...it, isWaitingLimit: true, errorMsg: 'ROTASI KUNCI...' } : it));
+            for (let t = 3; t > 0; t--) { setLimitWaitTime(t); await new Promise(r => setTimeout(r, 1000)); }
+            setLimitWaitTime(null);
           } else {
-             setItems((prev) => prev.map((it) => (it.id === item.id ? { ...it, status: 'error', errorMsg: errorMsg } : it)));
-             await new Promise(r => setTimeout(r, 2000));
-             break; 
+            setItems(prev => prev.map(it => it.id === current.id ? { ...it, status: 'error', errorMsg: err.message } : it));
+            break;
           }
         }
       }
 
       if (success && i < newItems.length - 1) {
-          for (let t = delaySec; t > 0; t--) {
-              setCooldownTime(t);
-              await new Promise(r => setTimeout(r, 1000));
-          }
-          setCooldownTime(null);
+        for (let t = delaySec; t > 0; t--) { setCooldownTime(t); await new Promise(r => setTimeout(r, 1000)); }
+        setCooldownTime(null);
       }
     }
     setIsProcessing(false);
   }, [batchPlan, selectedVoice, styleInstruction, delaySec, inputText]);
 
-  const handleDownloadZip = async () => {
-    setZipStatus('processing');
-    try {
-      const zipBlob = await createZipFromItems(items);
-      const url = URL.createObjectURL(zipBlob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `bacot_batch_${Date.now()}.zip`;
-      a.click();
-      setZipStatus('success');
-      setTimeout(() => setZipStatus('idle'), 3000);
-    } catch (e) {
-      setZipStatus('error');
-      setTimeout(() => setZipStatus('idle'), 3000);
-    }
-  };
-
-  const loadSampleStory = () => {
-    setInputText(SAMPLE_STORY);
-    setStyleInstruction(STYLE_PRESETS.find(s => s.id === 'pribadi')?.value || '');
-  };
-
-  if (hasError) {
-    return (
-      <div className="min-h-screen bg-[#0b0c0d] flex items-center justify-center p-10 text-center">
-        <div className="space-y-6 max-w-sm">
-          <AlertTriangle className="w-16 h-16 text-red-500 mx-auto" />
-          <h1 className="text-2xl font-black text-white italic uppercase tracking-tighter">Sistem Crash</h1>
-          <p className="text-slate-400 text-xs leading-relaxed uppercase font-bold tracking-widest">{hasError}</p>
-          <button 
-            onClick={() => { localStorage.clear(); window.location.reload(); }}
-            className="w-full py-4 bg-indigo-600 rounded-2xl text-white font-black text-[10px] uppercase tracking-[0.2em]"
-          >
-            RESET TOTAL DATA
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-[#0b0c0d] text-slate-900 dark:text-[#e3e3e3] flex flex-col font-sans transition-colors duration-300">
+    <div className="min-h-screen bg-[#0b0c0d] text-[#e3e3e3] flex flex-col font-sans selection:bg-indigo-500/30">
       <Header isDarkMode={isDarkMode} toggleTheme={toggleTheme} />
 
-      <main className="flex-grow max-w-[1600px] w-full mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
+      <main className="flex-grow max-w-[1400px] w-full mx-auto px-6 py-10 grid grid-cols-1 lg:grid-cols-12 gap-10">
         
-        {/* Kontrol Studio */}
-        <div className="lg:col-span-5 space-y-6">
-          <div className="bg-white dark:bg-[#1e1f20] rounded-[3rem] border border-slate-200 dark:border-[#444746] p-8 shadow-2xl sticky top-24">
-            
+        {/* Kontrol Produksi */}
+        <div className="lg:col-span-5">
+          <div className="bg-[#1e1f20] rounded-[2.5rem] border border-[#444746] p-8 shadow-2xl sticky top-24">
             <div className="flex items-center justify-between mb-8">
-                <h2 className="text-xl font-bold flex items-center gap-3 italic uppercase tracking-tighter">
+                <h2 className="text-xl font-black italic uppercase tracking-tighter flex items-center gap-3">
                     <Zap className="w-6 h-6 text-indigo-500 fill-current" />
-                    STUDIO PRODUKSI
+                    Production Studio
                 </h2>
-                <button 
-                  onClick={() => { if(confirm('Hapus semua history produksi?')) { setItems([]); localStorage.removeItem(STORAGE_KEY); } }}
-                  className="p-2 text-slate-400 hover:text-red-500 transition-colors"
-                  title="Clear Storage"
-                >
-                  <Trash2 className="w-5 h-5" />
+                <button onClick={() => { if(confirm('Reset total?')) { localStorage.clear(); window.location.reload(); } }} className="p-2 text-slate-500 hover:text-indigo-400 transition-all">
+                    <RotateCcw className="w-5 h-5" />
                 </button>
             </div>
 
             <div className="space-y-6">
-                <div className="flex items-center justify-between bg-slate-100 dark:bg-[#131314] p-4 rounded-2xl border border-slate-200 dark:border-[#444746]">
+                <div className="bg-[#131314] p-5 rounded-2xl border border-[#444746] flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         <ListOrdered className="w-5 h-5 text-indigo-500" />
-                        <span className="text-[10px] font-black text-slate-500 uppercase">Baris per Grup</span>
+                        <span className="text-[10px] font-black uppercase text-slate-400">Lines per Batch</span>
                     </div>
-                    <input 
-                      type="number" 
-                      value={linesPerBatch}
-                      onChange={(e) => setLinesPerBatch(Math.max(1, parseInt(e.target.value) || 1))}
-                      className="w-12 bg-transparent text-center text-lg font-black text-indigo-500 focus:outline-none"
-                    />
+                    <input type="number" value={linesPerBatch} onChange={e => setLinesPerBatch(Math.max(1, parseInt(e.target.value) || 1))} className="bg-transparent w-10 text-center text-lg font-black text-indigo-500 focus:outline-none" />
                 </div>
 
-                <div className="space-y-4">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
-                        <Sparkles className="w-4 h-4 text-amber-500" />
-                        GAYA NARASI
-                    </label>
+                <div className="space-y-3">
+                    <div className="flex justify-between items-center px-1">
+                         <label className="text-[10px] font-black uppercase text-slate-400">Narrative Styles</label>
+                    </div>
                     <div className="flex flex-wrap gap-2">
-                        {STYLE_PRESETS.map((style) => (
-                            <button
-                                key={style.id}
-                                onClick={() => setStyleInstruction(style.value)}
-                                className={`px-4 py-2 rounded-xl text-[10px] font-bold border transition-all ${
-                                    styleInstruction === style.value
-                                    ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg'
-                                    : 'bg-slate-50 dark:bg-[#131314] border-slate-200 dark:border-[#444746] text-slate-600 dark:text-gray-400 hover:border-indigo-500/50'
-                                }`}
-                            >
-                                {style.label}
+                        {STYLE_PRESETS.map(s => (
+                            <button key={s.id} onClick={() => setStyleInstruction(s.value)} className={`px-4 py-2 rounded-xl text-[10px] font-bold border transition-all ${styleInstruction === s.value ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg' : 'bg-[#131314] border-[#444746] text-slate-400 hover:border-indigo-500/50'}`}>
+                                {s.label}
                             </button>
                         ))}
                     </div>
@@ -284,150 +199,103 @@ const App: React.FC = () => {
 
                 <div className="space-y-3">
                     <div className="flex justify-between items-center px-1">
-                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">NASKAH NARASI</label>
-                         <button onClick={loadSampleStory} className="flex items-center gap-2 text-[10px] font-black text-amber-600 hover:opacity-80 uppercase italic tracking-tighter">
-                             <Quote className="w-3.5 h-3.5" />
-                             Load Sample
+                         <label className="text-[10px] font-black uppercase text-slate-400">Master Script</label>
+                         <button onClick={() => setInputText(SAMPLE_STORY)} className="text-[9px] font-black text-indigo-400 hover:underline flex items-center gap-1 uppercase">
+                             <Quote className="w-3 h-3" /> Sample Story
                          </button>
                     </div>
-                    <textarea
-                        value={inputText}
-                        onChange={(e) => setInputText(e.target.value)}
-                        placeholder="Ketik/tempel naskah..."
-                        className="w-full h-44 bg-slate-50 dark:bg-[#131314] border border-slate-200 dark:border-[#444746] rounded-[2rem] p-6 text-sm leading-relaxed focus:border-indigo-500 outline-none resize-none custom-scrollbar"
-                    />
+                    <textarea value={inputText} onChange={e => setInputText(e.target.value)} placeholder="Tulis atau tempel naskah narasi di sini..." className="w-full h-40 bg-[#131314] border border-[#444746] rounded-2xl p-5 text-sm focus:border-indigo-500 outline-none resize-none transition-all" />
                 </div>
 
-                <div className="bg-amber-500/5 border border-amber-500/20 rounded-2xl p-5 space-y-4">
+                <div className="bg-indigo-500/5 border border-indigo-500/10 rounded-2xl p-5 space-y-4">
                     <div className="flex justify-between items-center">
-                        <label className="text-[10px] font-black text-amber-600 uppercase flex items-center gap-2 tracking-[0.2em]">
-                            <Timer className="w-4 h-4" />
-                            DELAY ANTAR GRUP
+                        <label className="text-[10px] font-black text-indigo-400 uppercase flex items-center gap-2">
+                            <Timer className="w-4 h-4" /> Batch Cooldown
                         </label>
-                        <span className="text-sm font-black text-amber-600">{delaySec}S</span>
+                        <span className="text-sm font-black text-indigo-400">{delaySec}s</span>
                     </div>
-                    <input type="range" min="1" max="10" value={delaySec} onChange={(e) => setDelaySec(parseInt(e.target.value))} className="w-full accent-amber-500" />
+                    <input type="range" min="1" max="10" value={delaySec} onChange={e => setDelaySec(parseInt(e.target.value))} className="w-full accent-indigo-600 h-1" />
                 </div>
 
                 <div className="space-y-4">
                     <div className="flex justify-between items-center">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">KARAKTER SUARA</label>
-                        <div className="flex bg-slate-100 dark:bg-[#131314] p-1 rounded-xl border border-slate-200 dark:border-[#444746]">
+                        <label className="text-[10px] font-black uppercase text-slate-400">Voice Persona</label>
+                        <div className="flex bg-[#131314] p-1 rounded-xl border border-[#444746]">
                             {['Male', 'Female'].map(g => (
-                                <button key={g} onClick={() => setActiveGenderTab(g as any)} className={`px-4 py-1.5 text-[10px] font-black rounded-lg transition-all ${activeGenderTab === g ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500'}`}>
+                                <button key={g} onClick={() => setActiveGenderTab(g as any)} className={`px-3 py-1.5 text-[9px] font-black rounded-lg transition-all ${activeGenderTab === g ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500'}`}>
                                     {g === 'Male' ? 'PRIA' : 'WANITA'}
                                 </button>
                             ))}
                         </div>
                     </div>
-                    <div className="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto custom-scrollbar pr-2">
-                        {filteredVoices.map((v) => (
-                            <button key={v.name} onClick={() => setSelectedVoice(v.name)} className={`p-4 rounded-2xl border-2 transition-all text-left relative ${selectedVoice === v.name ? 'border-indigo-500 bg-indigo-500/5 text-indigo-500 shadow-inner' : 'border-slate-100 dark:border-[#444746] hover:border-slate-300'}`}>
-                                <div className="flex justify-between items-start">
-                                    <div>
-                                        <div className="text-sm font-bold flex items-center gap-2">
-                                            {v.name}
-                                            {(v.name === VoiceName.Kore || v.name === VoiceName.Zephyr) && <span className="text-[8px] bg-amber-500 text-white px-2 py-0.5 rounded-full uppercase font-black">REKOMENDASI</span>}
-                                        </div>
-                                        <div className="text-[10px] opacity-60 font-medium uppercase mt-0.5">{v.description}</div>
-                                    </div>
-                                    {selectedVoice === v.name && <Check className="w-4 h-4 text-indigo-500" />}
+                    <div className="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
+                        {filteredVoices.map(v => (
+                            <button key={v.name} onClick={() => setSelectedVoice(v.name)} className={`p-4 rounded-2xl border-2 transition-all text-left flex items-center justify-between ${selectedVoice === v.name ? 'border-indigo-500 bg-indigo-500/5 text-indigo-500' : 'border-[#444746] hover:border-slate-600'}`}>
+                                <div>
+                                    <div className="text-sm font-black">{v.name}</div>
+                                    <div className="text-[10px] opacity-60 font-medium uppercase">{v.description}</div>
                                 </div>
+                                {selectedVoice === v.name && <Check className="w-4 h-4" />}
                             </button>
                         ))}
                     </div>
                 </div>
 
-                <div className="pt-6 grid grid-cols-1 gap-4">
-                    <button onClick={handlePreview} disabled={isProcessing || previewStatus !== 'idle' || !inputText} className="w-full py-4 border-2 border-slate-200 dark:border-[#444746] rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-[#131314] flex items-center justify-center gap-3">
+                <div className="pt-4 grid grid-cols-1 gap-3">
+                    <button onClick={handlePreview} disabled={isProcessing || !inputText} className="w-full py-4 border border-[#444746] rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-[#131314] flex items-center justify-center gap-3 transition-all">
                          {previewStatus === 'generating' ? <Loader2 className="w-4 h-4 animate-spin" /> : previewStatus === 'playing' ? <Volume2 className="w-4 h-4 animate-bounce" /> : <PlayCircle className="w-4 h-4" />}
-                         TEST SAMPLE
+                         Test Sample
                     </button>
-
-                    <button onClick={handleGenerateBatch} disabled={isProcessing || batchPlan.length === 0} className={`w-full py-6 rounded-3xl text-white font-black text-lg shadow-2xl transition-all ${isProcessing ? 'bg-slate-800' : 'bg-indigo-600 hover:scale-[1.02] shadow-indigo-500/20'}`}>
-                        <div className="flex flex-col items-center">
+                    <button onClick={handleGenerateBatch} disabled={isProcessing || batchPlan.length === 0} className={`w-full py-6 rounded-3xl text-white font-black text-lg shadow-xl transition-all ${isProcessing ? 'bg-slate-800' : 'bg-indigo-600 hover:scale-[1.02] shadow-indigo-500/20 active:scale-95'}`}>
+                         <div className="flex flex-col items-center">
                             <div className="flex items-center gap-3">
-                                {isProcessing ? (limitWaitTime ? <RefreshCcw className="w-6 h-6 animate-spin" /> : <Loader2 className="w-6 h-6 animate-spin" />) : <Wand2 className="w-6 h-6" />}
-                                {isProcessing ? (
-                                    limitWaitTime ? `ROTASI KEYS... (${limitWaitTime}S)` : 
-                                    cooldownTime ? `DELAY: ${cooldownTime}S...` : 
-                                    `MEMPROSES BATCH...`
-                                ) : `GAS PRODUKSI`}
+                                {isProcessing ? <Loader2 className="w-6 h-6 animate-spin" /> : <Wand2 className="w-6 h-6" />}
+                                {isProcessing ? (limitWaitTime ? `ROTATING... (${limitWaitTime}s)` : cooldownTime ? `PAUSE... (${cooldownTime}s)` : `PROCESSING...`) : `GAS PRODUKSI`}
                             </div>
-                            {!isProcessing && <span className="text-[10px] opacity-60 font-bold mt-1 tracking-widest uppercase italic">{batchPlan.length} GRUP • {totalCharsOverall} KARAKTER</span>}
-                        </div>
+                            {!isProcessing && <span className="text-[9px] opacity-60 font-bold uppercase tracking-widest mt-1 italic">{batchPlan.length} Groups • {inputText.length} Chars</span>}
+                         </div>
                     </button>
                 </div>
             </div>
           </div>
         </div>
 
-        {/* Hasil Produksi */}
+        {/* Output Hasil */}
         <div className="lg:col-span-7 space-y-8">
-          {batchPlan.length > 0 && !isProcessing && items.length === 0 && (
-              <div className="bg-white dark:bg-[#1e1f20] rounded-[3rem] border border-slate-200 dark:border-[#444746] p-10 shadow-xl animate-in fade-in slide-in-from-bottom-4 duration-500">
-                  <div className="flex items-center justify-between mb-8">
-                      <h2 className="text-2xl font-black flex items-center gap-4 uppercase italic tracking-tighter">
-                          <ListOrdered className="w-8 h-8 text-indigo-500" />
-                          Batch Planner
-                      </h2>
-                      <div className="bg-indigo-500/10 text-indigo-600 px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest">
-                        {totalCharsOverall} Karakter
-                      </div>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
-                      {batchPlan.map((p) => (
-                          <div key={p.id} className="p-5 bg-slate-50 dark:bg-[#131314] rounded-[2rem] border border-slate-100 dark:border-[#444746] flex flex-col gap-3 hover:border-indigo-500/30 transition-all group">
-                               <div className="flex items-center justify-between">
-                                   <div className="flex items-center gap-3">
-                                       <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-black text-xs">
-                                           {p.group}
-                                       </div>
-                                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">Grup #{p.group}</span>
-                                   </div>
-                                   <div className="text-[10px] font-black text-indigo-500 bg-indigo-500/5 px-3 py-1.5 rounded-xl border border-indigo-500/10 uppercase">
-                                       {p.charCount} Karakter
-                                   </div>
-                               </div>
-                               <p className="text-xs text-slate-600 dark:text-gray-400 italic line-clamp-2 leading-relaxed">"{p.text}"</p>
-                          </div>
-                      ))}
-                  </div>
-              </div>
-          )}
-
-          <div className="space-y-6">
-            <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#444746] pb-6 px-2">
-                <h2 className="text-2xl font-black flex items-center gap-4 italic tracking-tighter uppercase">
-                    <History className="w-8 h-8 text-indigo-500" />
-                    History
-                    <span className="bg-indigo-500 text-white text-xs px-4 py-1 rounded-full not-italic">{items.length}</span>
-                </h2>
-                <div className="flex items-center gap-3">
-                    {items.some(i => i.status === 'completed') && (
-                        <button onClick={handleDownloadZip} disabled={zipStatus !== 'idle'} className="flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-indigo-500 transition-all shadow-xl active:scale-95">
-                             {zipStatus === 'processing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <DownloadCloud className="w-4 h-4" />}
-                             ZIP SEMUA
-                        </button>
-                    )}
-                    {items.length > 0 && (
-                        <button onClick={() => { if(confirm('Hapus histori produksi?')) { setItems([]); localStorage.removeItem(STORAGE_KEY); } }} className="p-3 text-slate-400 hover:text-red-500 transition-all">
-                            <Trash2 className="w-6 h-6" />
-                        </button>
-                    )}
-                </div>
-            </div>
-
-            <div className="flex flex-col gap-4">
-                {items.length === 0 ? (
-                    <div className="py-32 flex flex-col items-center justify-center border-4 border-dashed border-slate-100 dark:border-[#1e1f20] rounded-[3rem] opacity-30">
-                        <FileAudio className="w-20 h-20 mb-6" />
-                        <p className="text-sm font-black uppercase tracking-[0.4em] italic text-center text-slate-400">Gudang Produksi Kosong</p>
-                    </div>
-                ) : (
-                    items.map((item) => <ResultItem key={item.id} item={item} onRetry={() => {}} onUpload={handleUploadToCloud} />)
+          <div className="flex items-center justify-between border-b border-[#444746] pb-6 px-2">
+              <h2 className="text-2xl font-black italic uppercase tracking-tighter flex items-center gap-4">
+                  <History className="w-8 h-8 text-indigo-500" />
+                  Recording Logs
+                  <span className="bg-indigo-600 text-white text-[10px] px-3 py-1 rounded-full not-italic tracking-normal">{items.length}</span>
+              </h2>
+              <div className="flex items-center gap-3">
+                {items.some(i => i.status === 'completed') && (
+                    <button onClick={async () => {
+                        setZipStatus('processing');
+                        try {
+                            const blob = await createZipFromItems(items);
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a'); a.href = url; a.download = `bacot_${Date.now()}.zip`; a.click();
+                            setZipStatus('success'); setTimeout(() => setZipStatus('idle'), 3000);
+                        } catch { setZipStatus('error'); }
+                    }} disabled={zipStatus === 'processing'} className="bg-white text-[#0b0c0d] px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all flex items-center gap-2">
+                        {zipStatus === 'processing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <DownloadCloud className="w-4 h-4" />}
+                        Download ZIP
+                    </button>
                 )}
-            </div>
+                <button onClick={() => setItems([])} className="p-3 text-slate-500 hover:text-red-400 transition-all"><Trash2 className="w-6 h-6" /></button>
+              </div>
+          </div>
+
+          <div className="flex flex-col gap-4">
+              {items.length === 0 ? (
+                  <div className="py-40 flex flex-col items-center justify-center border-2 border-dashed border-[#444746] rounded-[3rem] opacity-20">
+                      <FileAudio className="w-16 h-16 mb-4" />
+                      <p className="text-xs font-black uppercase tracking-[0.3em] italic">Gudang Produksi Kosong</p>
+                  </div>
+              ) : (
+                  items.map(item => <ResultItem key={item.id} item={item} onRetry={() => {}} onUpload={handleUploadToCloud} />)
+              )}
           </div>
         </div>
       </main>
