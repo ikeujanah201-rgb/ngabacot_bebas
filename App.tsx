@@ -1,6 +1,6 @@
 
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
-import { Trash2, Wand2, PlayCircle, DownloadCloud, Loader2, Volume2, Check, Timer, ListOrdered, FileAudio, Sparkles, History, Type, Quote, Zap, RefreshCcw, AlertTriangle } from 'lucide-react';
+import { Trash2, Wand2, PlayCircle, DownloadCloud, Loader2, Volume2, Check, Timer, ListOrdered, FileAudio, Sparkles, History, Type, Quote, Zap, RefreshCcw, AlertTriangle, RotateCcw } from 'lucide-react';
 import Header from './components/Header';
 import ResultItem from './components/ResultItem';
 import { TTSItem, VoiceName, VoiceGender } from './types';
@@ -8,7 +8,7 @@ import { VOICE_METADATA, STYLE_PRESETS, SAMPLE_STORY } from './constants';
 import { generateSpeech } from './services/geminiService';
 import { createZipFromItems } from './utils/audioHelper';
 
-const STORAGE_KEY = 'ngabacot_v3_final_stable';
+const STORAGE_KEY = 'ngabacot_v4_stable';
 
 const App: React.FC = () => {
   const [isDarkMode, setIsDarkMode] = useState(true);
@@ -25,35 +25,48 @@ const App: React.FC = () => {
   const [limitWaitTime, setLimitWaitTime] = useState<number | null>(null);
   const [previewStatus, setPreviewStatus] = useState<'idle' | 'generating' | 'playing'>('idle');
   const [zipStatus, setZipStatus] = useState<'idle' | 'processing' | 'success' | 'error'>('idle');
-  const [initError, setInitError] = useState<string | null>(null);
 
-  // Persistence: Load dengan proteksi ekstra
+  // EMERGENCY RESET: Jika URL mengandung ?reset=true, bersihkan storage
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('reset') === 'true') {
+      localStorage.clear();
+      window.location.href = window.location.pathname; // Reload tanpa parameter
+    }
+  }, []);
+
+  // Persistence: Load dengan proteksi maksimal
   useEffect(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
+          // Hanya muat jika strukturnya benar-benar array
           setItems(parsed.map((i: any) => ({
             ...i,
             status: i.status === 'completed' && !i.audioUrl ? 'error' : i.status,
-            errorMsg: i.status === 'completed' && !i.audioUrl ? 'Data audio hilang setelah refresh' : i.errorMsg
+            errorMsg: i.status === 'completed' && !i.audioUrl ? 'Audio hilang (perlu generate ulang)' : i.errorMsg
           })));
+        } else {
+          localStorage.removeItem(STORAGE_KEY);
         }
       }
     } catch (e) {
-      console.error("Gagal memuat data lama:", e);
-      localStorage.removeItem(STORAGE_KEY); // Hapus jika rusak agar tidak blank lagi
+      console.error("Storage corrupted, clearing...");
+      localStorage.removeItem(STORAGE_KEY);
     }
   }, []);
 
   // Persistence: Save
   useEffect(() => {
     try {
-      const toSave = items.map(({ audioUrl, ...rest }) => rest);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+      if (items.length > 0) {
+        const dataToSave = items.map(({ audioUrl, ...rest }) => rest);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
+      }
     } catch (e) {
-      console.error("Gagal menyimpan data:", e);
+      console.error("Save failed:", e);
     }
   }, [items]);
 
@@ -73,7 +86,7 @@ const App: React.FC = () => {
       const blob = await response.blob();
       const fileName = `bacot_${id.substring(0, 6)}.wav`;
       const up = await fetch(`https://transfer.sh/${fileName}`, { method: 'PUT', body: blob });
-      if (!up.ok) throw new Error("Gagal upload");
+      if (!up.ok) throw new Error("Upload failed");
       const cloudUrl = await up.text();
       setItems(prev => prev.map(i => i.id === id ? { ...i, cloudUrl, isUploading: false } : i));
     } catch (e: any) {
@@ -153,12 +166,12 @@ const App: React.FC = () => {
           setItems((prev) => prev.map((it) => it.id === item.id ? { ...it, status: 'completed', audioUrl, retryCount: attempts, isWaitingLimit: false, errorMsg: undefined } : it));
           success = true; 
         } catch (error: any) {
-          const errorMsg = error.message || "Error tidak diketahui";
+          const errorMsg = error.message || "Gagal memproses";
           const isRateLimit = errorMsg.includes("429") || errorMsg.toLowerCase().includes("quota") || errorMsg.toLowerCase().includes("limit");
           
           if (isRateLimit) {
-             setItems((prev) => prev.map((it) => (it.id === item.id ? { ...it, isWaitingLimit: true, errorMsg: `LIMIT: SEDANG ROTASI API KEY...` } : it)));
-             for (let t = 3; t > 0; t--) {
+             setItems((prev) => prev.map((it) => (it.id === item.id ? { ...it, isWaitingLimit: true, errorMsg: `LIMIT: ROTASI API KEY...` } : it)));
+             for (let t = 2; t > 0; t--) {
                 setLimitWaitTime(t);
                 await new Promise(r => setTimeout(r, 1000));
              }
@@ -189,7 +202,7 @@ const App: React.FC = () => {
       const url = URL.createObjectURL(zipBlob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `ngabacot_batch_${Date.now()}.zip`;
+      a.download = `bacot_batch_${Date.now()}.zip`;
       a.click();
       setZipStatus('success');
       setTimeout(() => setZipStatus('idle'), 3000);
@@ -204,31 +217,13 @@ const App: React.FC = () => {
     setStyleInstruction(STYLE_PRESETS.find(s => s.id === 'pribadi')?.value || '');
   };
 
-  // UI Fallback jika terjadi error fatal
-  if (initError) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 text-white text-center">
-        <div className="space-y-6 max-w-md">
-          <AlertTriangle className="w-16 h-16 text-red-500 mx-auto animate-bounce" />
-          <h1 className="text-2xl font-bold">Opps! Aplikasi Gagal Memuat</h1>
-          <p className="text-slate-400 text-sm">{initError}</p>
-          <button 
-            onClick={() => { localStorage.clear(); window.location.reload(); }}
-            className="px-8 py-3 bg-indigo-600 rounded-2xl font-bold uppercase tracking-widest text-xs"
-          >
-            Bersihkan Cache & Muat Ulang
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-[#0b0c0d] text-slate-900 dark:text-[#e3e3e3] flex flex-col font-sans transition-colors duration-300">
       <Header isDarkMode={isDarkMode} toggleTheme={toggleTheme} />
 
       <main className="flex-grow max-w-[1600px] w-full mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
         
+        {/* Kontrol Studio */}
         <div className="lg:col-span-5 space-y-6">
           <div className="bg-white dark:bg-[#1e1f20] rounded-[3rem] border border-slate-200 dark:border-[#444746] p-8 shadow-2xl sticky top-24">
             
@@ -237,20 +232,33 @@ const App: React.FC = () => {
                     <Zap className="w-6 h-6 text-indigo-500 fill-current" />
                     STUDIO PRODUKSI
                 </h2>
-                <div className="flex items-center gap-2 bg-slate-100 dark:bg-[#131314] px-4 py-2 rounded-2xl border border-slate-200 dark:border-[#444746]">
-                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Grup/Baris:</span>
+                <button 
+                  onClick={() => { if(confirm('Hapus memori browser dan reset?')) { localStorage.clear(); window.location.reload(); } }}
+                  className="p-2 text-slate-400 hover:text-indigo-500 transition-colors"
+                  title="Reset Aplikasi"
+                >
+                  <RotateCcw className="w-5 h-5" />
+                </button>
+            </div>
+
+            <div className="space-y-6">
+                {/* Lines per Group */}
+                <div className="flex items-center justify-between bg-slate-100 dark:bg-[#131314] p-4 rounded-2xl border border-slate-200 dark:border-[#444746]">
+                    <div className="flex items-center gap-3">
+                        <ListOrdered className="w-5 h-5 text-indigo-500" />
+                        <span className="text-xs font-black text-slate-500 uppercase">Baris per Grup</span>
+                    </div>
                     <input 
                       type="number" 
                       value={linesPerBatch}
                       onChange={(e) => setLinesPerBatch(Math.max(1, parseInt(e.target.value) || 1))}
-                      className="w-8 bg-transparent text-center text-sm font-bold text-indigo-500 focus:outline-none"
+                      className="w-12 bg-transparent text-center text-lg font-black text-indigo-500 focus:outline-none"
                     />
                 </div>
-            </div>
 
-            <div className="space-y-6">
+                {/* Gaya Narasi */}
                 <div className="space-y-4">
-                    <label className="text-xs font-black text-slate-500 dark:text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                    <label className="text-xs font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
                         <Sparkles className="w-4 h-4 text-amber-500" />
                         GAYA NARASI
                     </label>
@@ -271,10 +279,11 @@ const App: React.FC = () => {
                     </div>
                 </div>
 
+                {/* Input Naskah */}
                 <div className="space-y-3">
                     <div className="flex justify-between items-center px-1">
-                         <label className="text-xs font-black text-slate-500 dark:text-gray-400 uppercase tracking-widest">NASKAH NARASI</label>
-                         <button onClick={loadSampleStory} className="flex items-center gap-2 text-[10px] font-black text-amber-600 dark:text-amber-500 hover:opacity-80 transition-opacity uppercase tracking-tighter">
+                         <label className="text-xs font-black text-slate-500 uppercase tracking-widest">NASKAH NARASI</label>
+                         <button onClick={loadSampleStory} className="flex items-center gap-2 text-[10px] font-black text-amber-600 hover:opacity-80 uppercase italic">
                              <Quote className="w-3.5 h-3.5" />
                              Muat Contoh
                          </button>
@@ -282,28 +291,30 @@ const App: React.FC = () => {
                     <textarea
                         value={inputText}
                         onChange={(e) => setInputText(e.target.value)}
-                        placeholder="Ketik atau tempel naskah di sini..."
+                        placeholder="Ketik naskah per baris di sini..."
                         className="w-full h-44 bg-slate-50 dark:bg-[#131314] border border-slate-200 dark:border-[#444746] rounded-[2rem] p-6 text-sm leading-relaxed focus:border-indigo-500 outline-none resize-none custom-scrollbar"
                     />
                 </div>
 
+                {/* Jeda Delay */}
                 <div className="bg-amber-500/5 border border-amber-500/20 rounded-2xl p-5 space-y-4">
                     <div className="flex justify-between items-center">
-                        <label className="text-xs font-black text-amber-600 dark:text-amber-500 uppercase tracking-widest flex items-center gap-2">
+                        <label className="text-xs font-black text-amber-600 uppercase flex items-center gap-2">
                             <Timer className="w-4 h-4" />
                             JEDA ANTAR GRUP
                         </label>
-                        <span className="text-sm font-bold text-amber-600 dark:text-amber-500">{delaySec}S</span>
+                        <span className="text-sm font-bold text-amber-600">{delaySec}S</span>
                     </div>
                     <input type="range" min="1" max="10" value={delaySec} onChange={(e) => setDelaySec(parseInt(e.target.value))} className="w-full accent-amber-500" />
                 </div>
 
+                {/* Pemilih Suara */}
                 <div className="space-y-4">
                     <div className="flex justify-between items-center">
-                        <label className="text-xs font-black text-slate-500 dark:text-gray-400 uppercase tracking-widest">KARAKTER SUARA</label>
+                        <label className="text-xs font-black text-slate-500 uppercase">PILIH SUARA</label>
                         <div className="flex bg-slate-100 dark:bg-[#131314] p-1 rounded-xl border border-slate-200 dark:border-[#444746]">
                             {['Male', 'Female'].map(g => (
-                                <button key={g} onClick={() => setActiveGenderTab(g as any)} className={`px-4 py-1.5 text-[10px] font-black rounded-lg transition-all ${activeGenderTab === g ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500 dark:text-gray-400'}`}>
+                                <button key={g} onClick={() => setActiveGenderTab(g as any)} className={`px-4 py-1.5 text-[10px] font-black rounded-lg transition-all ${activeGenderTab === g ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500'}`}>
                                     {g === 'Male' ? 'PRIA' : 'WANITA'}
                                 </button>
                             ))}
@@ -311,7 +322,7 @@ const App: React.FC = () => {
                     </div>
                     <div className="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto custom-scrollbar pr-2">
                         {filteredVoices.map((v) => (
-                            <button key={v.name} onClick={() => setSelectedVoice(v.name)} className={`p-4 rounded-2xl border-2 transition-all text-left relative ${selectedVoice === v.name ? 'border-indigo-500 bg-indigo-500/5 text-indigo-500 shadow-inner' : 'border-slate-100 dark:border-[#444746] hover:border-slate-300 dark:hover:border-slate-500'}`}>
+                            <button key={v.name} onClick={() => setSelectedVoice(v.name)} className={`p-4 rounded-2xl border-2 transition-all text-left relative ${selectedVoice === v.name ? 'border-indigo-500 bg-indigo-500/5 text-indigo-500 shadow-inner' : 'border-slate-100 dark:border-[#444746] hover:border-slate-300'}`}>
                                 <div className="flex justify-between items-start">
                                     <div>
                                         <div className="text-sm font-bold flex items-center gap-2">
@@ -330,17 +341,17 @@ const App: React.FC = () => {
                 <div className="pt-6 grid grid-cols-1 gap-4">
                     <button onClick={handlePreview} disabled={isProcessing || previewStatus !== 'idle' || !inputText} className="w-full py-4 border-2 border-slate-200 dark:border-[#444746] rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-[#131314] flex items-center justify-center gap-3">
                          {previewStatus === 'generating' ? <Loader2 className="w-4 h-4 animate-spin" /> : previewStatus === 'playing' ? <Volume2 className="w-4 h-4 animate-bounce" /> : <PlayCircle className="w-4 h-4" />}
-                         CEK PREVIEW SUARA
+                         TEST SUARA
                     </button>
 
-                    <button onClick={handleGenerateBatch} disabled={isProcessing || batchPlan.length === 0} className={`w-full py-6 rounded-3xl text-white font-black text-lg shadow-2xl transition-all ${isProcessing ? (limitWaitTime ? 'bg-amber-600 animate-pulse' : 'bg-slate-800') : 'bg-indigo-600 hover:scale-[1.02] shadow-indigo-500/20'}`}>
+                    <button onClick={handleGenerateBatch} disabled={isProcessing || batchPlan.length === 0} className={`w-full py-6 rounded-3xl text-white font-black text-lg shadow-2xl transition-all ${isProcessing ? 'bg-slate-800' : 'bg-indigo-600 hover:scale-[1.02] shadow-indigo-500/20'}`}>
                         <div className="flex flex-col items-center">
                             <div className="flex items-center gap-3">
                                 {isProcessing ? (limitWaitTime ? <RefreshCcw className="w-6 h-6 animate-spin" /> : <Loader2 className="w-6 h-6 animate-spin" />) : <Wand2 className="w-6 h-6" />}
                                 {isProcessing ? (
                                     limitWaitTime ? `ROTASI KEYS... (${limitWaitTime}S)` : 
                                     cooldownTime ? `JEDA: ${cooldownTime}S...` : 
-                                    `MEMPROSES BATCH...`
+                                    `MEMPROSES...`
                                 ) : `MULAI PRODUKSI`}
                             </div>
                             {!isProcessing && <span className="text-[10px] opacity-60 font-bold mt-1 tracking-widest uppercase italic">{batchPlan.length} GRUP • {totalCharsOverall} KARAKTER</span>}
@@ -351,6 +362,7 @@ const App: React.FC = () => {
           </div>
         </div>
 
+        {/* Hasil Produksi */}
         <div className="lg:col-span-7 space-y-8">
           {batchPlan.length > 0 && !isProcessing && items.length === 0 && (
               <div className="bg-white dark:bg-[#1e1f20] rounded-[3rem] border border-slate-200 dark:border-[#444746] p-10 shadow-xl animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -360,7 +372,7 @@ const App: React.FC = () => {
                           Batch Planner
                       </h2>
                       <div className="bg-indigo-500/10 text-indigo-600 px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest">
-                        {totalCharsOverall} Karakter Total
+                        {totalCharsOverall} Karakter
                       </div>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
@@ -373,9 +385,8 @@ const App: React.FC = () => {
                                        </div>
                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">Grup #{p.group}</span>
                                    </div>
-                                   <div className="flex items-center gap-1 text-[10px] font-black text-indigo-500 bg-indigo-500/5 px-3 py-1.5 rounded-xl border border-indigo-500/10">
-                                       <Type className="w-3 h-3" />
-                                       {p.charCount} CHARS
+                                   <div className="text-[10px] font-black text-indigo-500 bg-indigo-500/5 px-3 py-1.5 rounded-xl border border-indigo-500/10 uppercase">
+                                       {p.charCount} Karakter
                                    </div>
                                </div>
                                <p className="text-xs text-slate-600 dark:text-gray-400 italic line-clamp-2 leading-relaxed">"{p.text}"</p>
@@ -389,14 +400,14 @@ const App: React.FC = () => {
             <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#444746] pb-6 px-2">
                 <h2 className="text-2xl font-black flex items-center gap-4 italic tracking-tighter uppercase">
                     <History className="w-8 h-8 text-indigo-500" />
-                    History Produksi
+                    History
                     <span className="bg-indigo-500 text-white text-xs px-4 py-1 rounded-full not-italic">{items.length}</span>
                 </h2>
                 <div className="flex items-center gap-3">
                     {items.some(i => i.status === 'completed') && (
                         <button onClick={handleDownloadZip} disabled={zipStatus !== 'idle'} className="flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-indigo-500 transition-all shadow-xl active:scale-95">
                              {zipStatus === 'processing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <DownloadCloud className="w-4 h-4" />}
-                             ZIP ALL
+                             ZIP SEMUA
                         </button>
                     )}
                     {items.length > 0 && (
@@ -411,7 +422,7 @@ const App: React.FC = () => {
                 {items.length === 0 ? (
                     <div className="py-32 flex flex-col items-center justify-center border-4 border-dashed border-slate-100 dark:border-[#1e1f20] rounded-[3rem] opacity-30">
                         <FileAudio className="w-20 h-20 mb-6" />
-                        <p className="text-sm font-black uppercase tracking-[0.4em] italic text-center">Warehouse Empty</p>
+                        <p className="text-sm font-black uppercase tracking-[0.4em] italic text-center text-slate-400">Belum ada hasil produksi</p>
                     </div>
                 ) : (
                     items.map((item) => <ResultItem key={item.id} item={item} onRetry={() => {}} onUpload={handleUploadToCloud} />)
