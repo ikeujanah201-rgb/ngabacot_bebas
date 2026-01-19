@@ -3,29 +3,41 @@ import { TTS_MODEL } from "../constants";
 import { VoiceName } from "../types";
 import { base64ToUint8Array, pcmToWavBlob } from "../utils/audioHelper";
 
+/**
+ * Mendapatkan API Key secara aman dari environment variables.
+ * Mendukung format string tunggal atau daftar kunci dipisahkan koma.
+ */
+const getApiKeySafe = (): string => {
+  try {
+    // Mencoba akses process.env dengan berbagai fallback
+    const rawKey = (typeof process !== 'undefined' && process.env?.API_KEY) || 
+                   (window as any).process?.env?.API_KEY || 
+                   "";
+    
+    if (!rawKey) return "";
+
+    // Memecah kunci jika ada banyak (Multi-Key Rotation)
+    const keys = rawKey.split(',').map(k => k.trim()).filter(k => k.length > 0);
+    if (keys.length === 0) return "";
+
+    // Memilih satu kunci secara acak untuk load balancing/rotasi
+    return keys[Math.floor(Math.random() * keys.length)];
+  } catch (e) {
+    console.warn("Gagal mengakses API_KEY:", e);
+    return "";
+  }
+};
+
 const getClient = () => {
-  // Mengambil string API Key dari environment variable (bisa berisi banyak kunci dipisah koma)
-  const keysString = process.env.API_KEY;
-  
-  if (!keysString) {
-    throw new Error("API_KEY tidak ditemukan di environment variables.");
+  const apiKey = getApiKeySafe();
+  if (!apiKey) {
+    throw new Error("API_KEY tidak ditemukan. Pastikan variabel lingkungan sudah disetel di Vercel/Studio.");
   }
-
-  // LOGIKA MULTI-KEY: Pecah string dan bersihkan
-  const keys = keysString.split(',').map(key => key.trim()).filter(key => key.length > 0);
-
-  if (keys.length === 0) {
-    throw new Error("Format API_KEY tidak valid.");
-  }
-
-  // ROTASI ACAK: Pilih satu kunci secara random
-  const randomKey = keys[Math.floor(Math.random() * keys.length)];
-
-  return new GoogleGenAI({ apiKey: randomKey });
+  return new GoogleGenAI({ apiKey });
 };
 
 /**
- * Generates speech with a strict consistency lock for professional narration.
+ * Melakukan generate speech dengan instruksi konsistensi suara yang ketat.
  */
 export const generateSpeech = async (
   text: string, 
@@ -37,7 +49,7 @@ export const generateSpeech = async (
   const style = styleInstruction || "natural and professional";
   const cleanText = text.replace(/^["']|["']$/g, '').trim();
 
-  // Mempersiapkan memori konteks agar suara tetap konsisten
+  // Membangun konteks memori untuk AI agar intonasi tetap terjaga
   let contextBefore = "";
   if (fullContext) {
     const index = fullContext.indexOf(text);
@@ -46,28 +58,27 @@ export const generateSpeech = async (
     }
   }
 
-  // Prompt Konsistensi Total (Sesuai permintaan user)
   const prompt = `
 # SYSTEM INSTRUCTION: CONSISTENCY LOCK
-You are a high-end AI Voice Engine. You are currently in the middle of a LONG recording session.
-Consistency is your HIGHEST priority. 
+You are a high-end AI Voice Engine in a long recording session.
+TOTAL CONSISTENCY IS REQUIRED.
 
-## YOUR PERSONA:
+## PERSONA:
 - Voice ID: ${voice}
 - Style: ${style}
-- State: Mid-narration (seamless flow required)
+- Flow: Mid-narration continuation
 
-## RULES FOR TOTAL CONSISTENCY:
-1. DO NOT change your pitch, volume, or emotional energy.
-2. DO NOT change your speaking rate/speed.
-3. Maintain the EXACT SAME personality as the previous segments.
-4. NO intro/outro breathing or pauses at the start or end of this segment.
-5. NO "citation" or "reading a list" tone. This is a FLUID narration.
+## RULES:
+1. NO pitch, volume, or energy shifts.
+2. NO speed changes.
+3. Keep the exact same personality as before.
+4. NO intro/outro pauses or breathing sounds.
+5. This is a FLUID narration, not a list reading.
 
-## CONTEXT MEMORY (FOR REFERENCE ONLY - DO NOT SPEAK):
-"${contextBefore || 'Start of the story.'}"
+## MEMORY (DO NOT SPEAK):
+"${contextBefore || 'Start of session.'}"
 
-## CURRENT TEXT SEGMENT TO GENERATE (SPEAK ONLY THIS):
+## TEXT TO SPEAK (SPEAK ONLY THIS):
 ${cleanText}
   `.trim();
 
@@ -89,8 +100,8 @@ ${cleanText}
 
     if (!base64Audio) {
       const finishReason = response.candidates?.[0]?.finishReason;
-      if (finishReason === 'SAFETY') throw new Error("Diblokir oleh filter keamanan.");
-      throw new Error(`Gagal: ${finishReason || 'Unknown'}`);
+      if (finishReason === 'SAFETY') throw new Error("Diblokir oleh filter keamanan (Safety Filter).");
+      throw new Error(`TTS Gagal: ${finishReason || 'Alasan tidak diketahui'}`);
     }
 
     const pcmData = base64ToUint8Array(base64Audio);
