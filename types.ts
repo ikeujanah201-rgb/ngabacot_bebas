@@ -1,4 +1,3 @@
-
 export enum VoiceName {
   Kore = 'Kore',
   Puck = 'Puck',
@@ -17,7 +16,7 @@ export interface VoiceInfo {
 
 export interface AnalysisResult {
   recommendedVoice: VoiceName;
-  styleInstruction: string;
+  styleInstruction: string; // Kept for display only
   reason: string;
 }
 
@@ -26,8 +25,6 @@ export interface TTSItem {
   text: string;
   status: 'pending' | 'processing' | 'completed' | 'error';
   audioUrl?: string;
-  cloudUrl?: string;
-  isUploading?: boolean;
   errorMsg?: string;
   voice: VoiceName;
 }
